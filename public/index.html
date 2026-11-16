@@ -49,11 +49,30 @@
   </style>
 </head>
 <body class="h-full">
-<div id="app" class="h-full"></div>
+<div id="error-banner" style="display:none;position:fixed;top:0;left:0;right:0;z-index:99999;background:#7f1d1d;color:#fecaca;padding:10px 14px;font:13px/1.4 ui-monospace,monospace;white-space:pre-wrap;max-height:40vh;overflow:auto;border-bottom:1px solid #ef4444"></div>
+<div id="app" class="h-full"><div style="min-height:100vh;display:flex;align-items:center;justify-content:center;background:#18181b;color:#e5e7eb;font-family:ui-sans-serif,system-ui"><div style="text-align:center"><div style="font-size:20px;font-weight:600;margin-bottom:6px">Automation Builder</div><div style="color:#9ca3af;font-size:14px">Loading…</div></div></div></div>
+
+<script>
+(function(){
+  function showError(msg){
+    var b=document.getElementById('error-banner'); if(!b) return;
+    b.style.display='block';
+    b.textContent = (b.textContent ? b.textContent + "\n\n" : "") + msg;
+  }
+  window.__showAppError = showError;
+  window.onerror = function(message, source, lineno, colno, error){
+    showError('Error: ' + message + '\n' + (source||'') + ':' + (lineno||0) + ':' + (colno||0) + (error && error.stack ? '\n' + error.stack : ''));
+  };
+  window.addEventListener('unhandledrejection', function(ev){
+    var r = ev && ev.reason;
+    showError('Unhandled rejection: ' + (r && (r.stack || r.message) ? (r.stack || r.message) : String(r)));
+  });
+})();
+</script>
 
 <script type="module">
-import { initializeApp } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-app.js";
-import { getAuth, onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, GoogleAuthProvider, signInWithPopup, signOut } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-auth.js";
+let fbApp, auth, googleProvider;
+let initializeApp, getAuth, onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, GoogleAuthProvider, signInWithPopup, signOut;
 
 const firebaseConfig = {
   apiKey: "AIzaSyBaK5EOnATL7D5zVexeQHGp7fuyq8KJBP8",
@@ -64,9 +83,6 @@ const firebaseConfig = {
   appId: "1:932730992269:web:fbbfce99bdd3857054d4c4",
   measurementId: "G-Q4YXEWS8HS"
 };
-const fbApp = initializeApp(firebaseConfig);
-const auth = getAuth(fbApp);
-const googleProvider = new GoogleAuthProvider();
 
 const state = {
   user:null, token:null,
@@ -484,14 +500,38 @@ async function executeWorkflow(){ try{ state.runStatus={}; renderCanvas(); state
 
 let pollTimer=null; function startPolling(){ if(pollTimer) clearInterval(pollTimer); pollTimer=setInterval(async ()=>{ if(!state.user) return; if(isEditing()) return; await refreshLogs(); }, 3000); }
 
-onAuthStateChanged(auth, async (user)=>{
-  state.user=user||null; state.error='';
-  if(user){ state.token=await user.getIdToken(); await Promise.all([refreshVault(),refreshLogs(),refreshWorkflows(),refreshChats(),refreshSettings()]); startPolling(); }
-  else { state.token=null; state.vault=[]; state.logs=[]; state.workflows=[]; state.chats=[]; if(pollTimer) clearInterval(pollTimer); }
-  const root=$('#app'); if(root){ root.dataset.shell=''; root.innerHTML=''; } render();
-});
+async function initApp(){
+  try {
+    render(); // show auth screen immediately
+    const appMod = await import("https://www.gstatic.com/firebasejs/11.0.2/firebase-app.js");
+    const authMod = await import("https://www.gstatic.com/firebasejs/11.0.2/firebase-auth.js");
+    ({ initializeApp, getAuth, onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, GoogleAuthProvider, signInWithPopup, signOut } = authMod);
+    fbApp = appMod.initializeApp(firebaseConfig);
+    auth = getAuth(fbApp);
+    googleProvider = new GoogleAuthProvider();
+    onAuthStateChanged(auth, async (user)=>{
+      try {
+        state.user=user||null; state.error='';
+        if(user){
+          state.token=await user.getIdToken();
+          await Promise.all([refreshVault(),refreshLogs(),refreshWorkflows(),refreshChats(),refreshSettings()]);
+          startPolling();
+        } else {
+          state.token=null; state.vault=[]; state.logs=[]; state.workflows=[]; state.chats=[];
+          if(pollTimer) clearInterval(pollTimer);
+        }
+        const root=$('#app'); if(root){ root.dataset.shell=''; root.innerHTML=''; }
+        render();
+      } catch (e) { if(window.__showAppError) window.__showAppError((e && (e.stack||e.message)) || String(e)); }
+    });
+  } catch (e) {
+    state.error = 'Failed to initialize app. ' + (e && e.message ? e.message : String(e));
+    try { render(); } catch(_) {}
+    if(window.__showAppError) window.__showAppError((e && (e.stack||e.message)) || String(e));
+  }
+}
 
-render();
+initApp();
 </script>
 </body>
 </html>
