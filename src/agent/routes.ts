@@ -1,5 +1,6 @@
 import type { AgentRunRequest, Env, LogEntry, WorkflowGraph, WorkflowParams } from "../types";
 import { requireAuth } from "../vault/auth";
+import { runAI } from "./aiRouter";
 
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {
@@ -48,6 +49,28 @@ export async function handleAgentRequest(request: Request, env: Env, url: URL): 
         body: JSON.stringify({ id: body.id, name: body.name, data: body.data }),
       });
       return new Response(res.body, { status: res.status, headers: { "Content-Type": "application/json" } });
+    }
+
+    // AI Settings (stored in vault as ai_settings)
+    if (request.method === "GET" && url.pathname === "/api/agent/settings") {
+      const { getVaultCredential } = await import("../vault");
+      const s = await getVaultCredential(env, auth.uid, auth.token, "ai_settings");
+      return json({ settings: s || {} });
+    }
+    if (request.method === "POST" && url.pathname === "/api/agent/settings") {
+      const body = await request.json() as Record<string, unknown>;
+      const { encryptJSON } = await import("../vault/crypto");
+      const { setVaultItem } = await import("../vault/firestore");
+      const enc = await encryptJSON(env.ENCRYPTION_SECRET, body || {});
+      await setVaultItem(auth.uid, auth.token, {
+        serviceId: "ai_settings",
+        label: "AI Settings",
+        ciphertext: enc.ciphertext,
+        iv: enc.iv,
+        salt: enc.salt,
+        updatedAt: new Date().toISOString(),
+      });
+      return json({ ok: true });
     }
 
     if (request.method === "POST" && url.pathname === "/api/agent/run") {
@@ -136,22 +159,22 @@ export async function handleAgentRequest(request: Request, env: Env, url: URL): 
       }
 
       try {
-        const aiRes = await env["Worker AI"].run("@cf/meta/llama-3.3-70b-instruct-fp8-fast", {
+        const aiRes = await runAI(env, auth.uid, auth.token, {
           messages: [
             { role: "system", content: "You are a helpful automation assistant. Return a clear, actionable response." },
             { role: "user", content: prompt },
           ],
+          provider: (body as any).provider,
+          model: (body as any).model,
         });
-        const text =
-          typeof aiRes === "object" && aiRes && "response" in aiRes
-            ? String((aiRes as { response: unknown }).response)
-            : JSON.stringify(aiRes);
+        const text = aiRes.text;
+        const result = JSON.stringify({ text, provider: aiRes.provider, model: aiRes.model, badge: aiRes.badge }, null, 2);
         await stub.fetch("https://do/log/update", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ id: logId, status: "completed", result: text }),
+          body: JSON.stringify({ id: logId, status: "completed", result }),
         });
-        return json({ ok: true, logId, status: "completed", result: text });
+        return json({ ok: true, logId, status: "completed", result: text, aiMeta: { provider: aiRes.provider, model: aiRes.model, badge: aiRes.badge } });
       } catch (err) {
         const message = err instanceof Error ? err.message : "AI run failed";
         await stub.fetch("https://do/log/update", {

@@ -1,5 +1,6 @@
 import type { Env } from "../types";
 import { requireAuth } from "../vault/auth";
+import { runAI } from "./aiRouter";
 
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), { status, headers: { "Content-Type": "application/json" } });
@@ -31,7 +32,7 @@ export async function handleChatRequest(request: Request, env: Env, url: URL): P
     }
 
     if (request.method === "POST" && url.pathname === "/api/agent/chat") {
-      const body = await request.json() as { message: string; chatId?: string; history?: Array<{role:string;content:string}>; workflow?: any };
+      const body = await request.json() as { message: string; chatId?: string; history?: Array<{role:string;content:string}>; workflow?: any; provider?: string; model?: string };
       const message = (body.message || "").trim();
       if (!message) return json({ error: "message required" }, 400);
 
@@ -52,7 +53,7 @@ Return ONLY a single valid JSON object (no markdown fences, no extra text) with 
 Rules:
 - Always include workflowGraph with at least a trigger node and relevant nodes/edges; positions should form a clear left-to-right layout.
 - Use type 'code' with subtype 'js' for JavaScript/transform nodes; put code in config.code. Code nodes receive $input (previous node output) and $secrets (object of attached decrypted credential).
-- Use type 'ai' for AI steps (config.prompt, config.model '@cf/meta/llama-3.3-70b-instruct-fp8-fast').
+- Use type 'ai' for AI steps (config.prompt, config.model can be set to user-selected model when relevant).
 - Use type 'action' for app/HTTP nodes (subtypes: http, twitter, youtube, gmail, drive, sheets, telegram, discord). Put url/method/body in config and credentialId when a saved vault credential is needed.
 - requiredCredentials must list service ids the user needs connected (use google_youtube/google_gmail/google_drive/google_sheets or twitter/openai/webhook/custom as appropriate; include both plain and google_ prefixed forms when relevant, e.g. ['google_youtube','youtube']).
 - codeBlocks is optional array of any standalone code snippets to show in chat.
@@ -61,35 +62,39 @@ Rules:
       const userContent = JSON.stringify({ request: message, currentWorkflow: body.workflow || null });
       const messages = [{ role: "system", content: system }, ...history, { role: "user", content: userContent }];
 
-      let aiText = "";
+      let aiRes;
       try {
-        const res = await env["Worker AI"].run("@cf/meta/llama-3.3-70b-instruct-fp8-fast", { messages });
-        aiText = typeof res === "object" && res && "response" in res ? String((res as any).response) : JSON.stringify(res);
+        aiRes = await runAI(env, auth.uid, auth.token, {
+          messages,
+          provider: (body.provider as any) || undefined,
+          model: body.model || undefined,
+          jsonMode: true,
+        });
       } catch (e) {
         return json({ error: e instanceof Error ? e.message : "AI failed" }, 500);
       }
 
       let parsed: any = null;
       try {
-        const m = aiText.match(/\{[\s\S]*\}/);
-        parsed = m ? JSON.parse(m[0]) : JSON.parse(aiText);
+        const cleaned = aiRes.text.replace(/^```(?:json)?/i, "").replace(/```$/i, "").trim();
+        const m = cleaned.match(/\{[\s\S]*\}/);
+        parsed = m ? JSON.parse(m[0]) : JSON.parse(cleaned);
       } catch {
-        parsed = { explanation: aiText, codeBlocks: [], workflowGraph: { nodes: [], edges: [], groups: [] }, requiredCredentials: [] };
+        parsed = { explanation: aiRes.text, codeBlocks: [], workflowGraph: { nodes: [], edges: [], groups: [] }, requiredCredentials: [] };
       }
       if (!parsed.workflowGraph) parsed.workflowGraph = { nodes: [], edges: [], groups: [] };
       if (!Array.isArray(parsed.requiredCredentials)) parsed.requiredCredentials = [];
 
-      // persist chat messages
       const chatId = body.chatId || crypto.randomUUID();
       await stub.fetch("https://do/chats/append", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ chatId, title: message.slice(0, 60), messages: [
           { role: "user", content: message, ts: new Date().toISOString() },
-          { role: "assistant", content: parsed.explanation || "", data: parsed, ts: new Date().toISOString() }
+          { role: "assistant", content: parsed.explanation || "", data: { ...parsed, aiMeta: { provider: aiRes.provider, model: aiRes.model, badge: aiRes.badge } }, ts: new Date().toISOString(), aiMeta: { provider: aiRes.provider, model: aiRes.model, badge: aiRes.badge } }
         ] })
       });
 
-      return json({ ok: true, chatId, ...parsed });
+      return json({ ok: true, chatId, ...parsed, aiMeta: { provider: aiRes.provider, model: aiRes.model, badge: aiRes.badge, failoverReasons: aiRes.failoverReasons || [] } });
     }
 
     return json({ error: "Not found" }, 404);
@@ -97,3 +102,4 @@ Rules:
     return json({ error: err instanceof Error ? err.message : "Chat error" }, 500);
   }
 }
+

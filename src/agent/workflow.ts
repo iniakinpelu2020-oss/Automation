@@ -2,6 +2,7 @@ import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloud
 import type { Env, NodeLog, WorkflowNode, WorkflowParams } from "../types";
 import { getVaultCredential } from "../vault";
 import { getValidGoogleAccessToken } from "../vault/oauth";
+import { runAI } from "./aiRouter";
 
 type CredFlat = { [k: string]: string | number | boolean | null };
 type OutputsMap = Record<string, any>;
@@ -151,7 +152,8 @@ export class AutomationWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> 
 
           if (node.type === "ai") {
             const promptTpl = String(resolvedConfig.prompt ?? resolvedConfig.input ?? "");
-            const model = String(resolvedConfig.model || "@cf/meta/llama-3.3-70b-instruct-fp8-fast");
+            const provider = (resolvedConfig.provider || resolvedConfig.aiProvider || undefined) as any;
+            const customModel = String(resolvedConfig.customModelId || resolvedConfig.model || "").trim() || undefined;
             const system = String(resolvedConfig.system || "You are a helpful automation agent.");
             let credCtx = "";
             if (cred) credCtx = `\nAttached credential keys: ${Object.keys(cred).join(", ")}`;
@@ -159,11 +161,8 @@ export class AutomationWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> 
               { role: "system" as const, content: system + credCtx },
               { role: "user" as const, content: promptTpl || "Execute this step." },
             ];
-            let res: any;
-            try { res = await this.env["Worker AI"].run(model as any, { messages }); }
-            catch { res = await this.env["Worker AI"].run("@cf/meta/llama-3.3-70b-instruct-fp8-fast", { messages }); }
-            const text = typeof res === "object" && res && "response" in res ? String(res.response) : JSON.stringify(res);
-            return toSerializable({ output: text, model });
+            const aiRes = await runAI(this.env, uid, token, { messages, provider, model: customModel, jsonMode: !!resolvedConfig.jsonMode });
+            return toSerializable({ output: aiRes.text, model: aiRes.model, provider: aiRes.provider, badge: aiRes.badge, failoverReasons: aiRes.failoverReasons || [] });
           }
 
           if (node.type === "code" || node.subtype === "js" || node.subtype === "code") {
