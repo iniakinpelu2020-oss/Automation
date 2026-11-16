@@ -103,6 +103,7 @@ const state = {
   chatProvider:'auto', chatCustomModel:'',
   vaultFocusService:null,
   returnTo:null,
+  searxngTest:null,
 };
 
 const $=(s,r=document)=>r.querySelector(s);
@@ -291,7 +292,7 @@ function renderNodeDrawer(){
 function renderSettings(){
   const tab=state.settingsTab||'ai';
   const connected=(id)=>isCredConnected(id.replace(/^google_/,''));
-  const presetList=[{name:'Google Gemini (AQ./AIza)',serviceId:'gemini',label:'Gemini API',fields:[['apiKey','']]},{name:'Groq',serviceId:'groq',label:'Groq',fields:[['apiKey','']]},{name:'OpenRouter',serviceId:'openrouter',label:'OpenRouter',fields:[['apiKey','']]},{name:'GitHub',serviceId:'github',label:'GitHub',fields:[['token','']]},{name:'X/Twitter',serviceId:'twitter',label:'X/Twitter',fields:[['apiKey',''],['apiSecret',''],['accessToken',''],['accessSecret',''],['bearerToken','']]},{name:'OpenAI',serviceId:'openai',label:'OpenAI',fields:[['apiKey','']]},{name:'Custom Webhook/API Key',serviceId:'custom-webhook',label:'Custom Webhook',fields:[['url','https://'],['method','POST'],['authorization','Bearer '']]}];
+  const presetList=[{name:'Google Gemini (AQ./AIza)',serviceId:'gemini',label:'Gemini API',fields:[['apiKey','']]},{name:'Groq',serviceId:'groq',label:'Groq',fields:[['apiKey','']]},{name:'OpenRouter',serviceId:'openrouter',label:'OpenRouter',fields:[['apiKey','']]},{name:'GitHub',serviceId:'github',label:'GitHub',fields:[['token','']]},{name:'X/Twitter',serviceId:'twitter',label:'X/Twitter',fields:[['apiKey',''],['apiSecret',''],['accessToken',''],['accessSecret',''],['bearerToken','']]},{name:'OpenAI',serviceId:'openai',label:'OpenAI',fields:[['apiKey','']]},{name:'searxng (SearXNG Instance)',serviceId:'searxng',label:'SearXNG Instance',fields:[['instanceUrl','https://searxng-6mmb.onrender.com'],['authHeaderName',''],['authHeaderValue','']]},{name:'Custom Webhook/API Key',serviceId:'custom-webhook',label:'Custom Webhook',fields:[['url','https://'],['method','POST'],['authorization','Bearer '']]}];
   const googleSvcs=['youtube','gmail','drive','sheets'];
   return `<div class="flex-1 min-h-0 flex flex-col" style="background:var(--bg)">
     <div class="px-4 pt-4 border-b" style="border-color:var(--border);background:#1e1e22"><h1 class="text-xl font-semibold mb-2">Settings</h1>
@@ -318,6 +319,12 @@ function renderSettings(){
             <div class="text-xs mt-2 p-2 rounded" style="background:#18181b;border:1px solid var(--border);color:var(--muted)">Requires Worker secrets <code>GOOGLE_CLIENT_ID</code> and <code>GOOGLE_CLIENT_SECRET</code>. Redirect URI: <code>https://automation.iniakinpelu2020.workers.dev/api/oauth/google/callback</code>. If not configured, the start endpoint returns setup instructions.</div>
           </div>
           <div><div class="font-medium mb-2">Presets</div><div class="flex flex-wrap gap-2">${presetList.map((p,i)=>`<button data-preset="${i}" class="pill">${esc(p.name)}</button>`).join('')}</div></div>
+          <div class="rounded-lg p-3 space-y-2" style="background:#18181b;border:1px solid var(--border)">
+            <div class="flex items-center justify-between gap-2 flex-wrap"><div class="font-medium text-sm">SearXNG Web Search</div>${state.searxngTest && state.searxngTest.ok ? '<span class="badge b-success">Connected</span>' : ''}</div>
+            <div class="text-xs" style="color:var(--muted)">Default endpoint: <code>https://searxng-6mmb.onrender.com</code>. Save a custom <code>searxng</code> credential in Vault to override (instanceUrl, optional authHeaderName/authHeaderValue).</div>
+            <div class="flex items-center gap-2 flex-wrap"><button id="test-searxng" type="button" class="btn text-sm">Test Connection</button>${state.searxngTest && state.searxngTest.loading ? '<span class="text-xs" style="color:var(--muted)">Testing...</span>' : ''}</div>
+            ${state.searxngTest && state.searxngTest.msg ? `<div class="text-xs p-2 rounded" style="${state.searxngTest.ok ? 'background:rgba(16,185,129,.12);color:#6ee7b7;border:1px solid rgba(16,185,129,.3)' : 'background:rgba(239,68,68,.08);color:#fca5a5;border:1px solid rgba(239,68,68,.25)'}">${esc(state.searxngTest.msg)}</div>` : ''}
+          </div>
           <form id="vault-form" class="space-y-3 pt-2 border-t" style="border-color:var(--border)"><div class="font-medium">Add / Update Credential</div>
             <div class="grid grid-cols-2 gap-2"><label class="block"><span class="label">Service ID</span><input id="v-serviceId" class="input" required /></label><label class="block"><span class="label">Label</span><input id="v-label" class="input" required /></label></div>
             <div class="flex items-center justify-between"><span class="label mb-0">Secret fields</span><button type="button" id="v-add" class="text-sm" style="color:#fda4af">+ Add field</button></div>
@@ -417,9 +424,26 @@ function bindGlobal(){
     if(t.id==='save-ai-settings') saveAISettings();
     if(t.id==='v-refresh') { await refreshVault(); const main=$('#main'); if(state.nav==='settings'&&main){ main.dataset.viewKey=''; render(); } }
     const gconn=t.closest('[data-gconn]'); if(gconn){ const service=gconn.getAttribute('data-gconn'); if(!state.token) return alert('Not authenticated'); window.open(`/api/oauth/google/start?service=${encodeURIComponent(service)}&token=${encodeURIComponent(state.token)}`,'google_oauth','width=520,height=700'); }
-    const preset=t.closest('[data-preset]'); if(preset){ const presets=[{serviceId:'gemini',label:'Gemini API',fields:[['apiKey','']]},{serviceId:'groq',label:'Groq',fields:[['apiKey','']]},{serviceId:'openrouter',label:'OpenRouter',fields:[['apiKey','']]},{serviceId:'github',label:'GitHub',fields:[['token','']]},{serviceId:'twitter',label:'X/Twitter',fields:[['apiKey',''],['apiSecret',''],['accessToken',''],['accessSecret',''],['bearerToken','']]},{serviceId:'openai',label:'OpenAI',fields:[['apiKey','']]},{serviceId:'custom-webhook',label:'Custom Webhook',fields:[['url','https://'],['method','POST'],['authorization','Bearer '']]}]; const p=presets[Number(preset.getAttribute('data-preset'))]; if(p){ state._vaultKV=p.fields.map(([k,v])=>({key:k,value:v})); const main=$('#main'); if(main){main.dataset.viewKey='';} render(); setTimeout(()=>{ const s=$('#v-serviceId'),l=$('#v-label'); if(s) s.value=p.serviceId; if(l) l.value=p.label; },0);} }
+    const preset=t.closest('[data-preset]'); if(preset){ const presets=[{serviceId:'gemini',label:'Gemini API',fields:[['apiKey','']]},{serviceId:'groq',label:'Groq',fields:[['apiKey','']]},{serviceId:'openrouter',label:'OpenRouter',fields:[['apiKey','']]},{serviceId:'github',label:'GitHub',fields:[['token','']]},{serviceId:'twitter',label:'X/Twitter',fields:[['apiKey',''],['apiSecret',''],['accessToken',''],['accessSecret',''],['bearerToken','']]},{serviceId:'openai',label:'OpenAI',fields:[['apiKey','']]},{serviceId:'searxng',label:'SearXNG Instance',fields:[['instanceUrl','https://searxng-6mmb.onrender.com'],['authHeaderName',''],['authHeaderValue','']]},{serviceId:'custom-webhook',label:'Custom Webhook',fields:[['url','https://'],['method','POST'],['authorization','Bearer '']]}]; const p=presets[Number(preset.getAttribute('data-preset'))]; if(p){ state._vaultKV=p.fields.map(([k,v])=>({key:k,value:v})); state.searxngTest=null; const main=$('#main'); if(main){main.dataset.viewKey='';} render(); setTimeout(()=>{ const s=$('#v-serviceId'),l=$('#v-label'); if(s) s.value=p.serviceId; if(l) l.value=p.label; },0);} }
     const vdel=t.closest('[data-vdel]'); if(vdel){ const id=vdel.getAttribute('data-vdel'); if(confirm(`Delete credential "${id}"?`)){ try{ await api(`/api/vault/${encodeURIComponent(id)}`,{method:'DELETE'}); await refreshVault(); renderCredentialRows(); const main=$('#main'); if(state.nav==='settings'&&main){main.dataset.viewKey='';} render(); }catch(err){ alert(err.message);} } }
-    const vtest=t.closest('[data-vtest]'); if(vtest){ const id=vtest.getAttribute('data-vtest'); alert(`Credential "${id}" is stored (encrypted). Runtime connectivity is verified when workflows execute using this credential.`); }
+    if(t.id==='test-searxng' || t.closest('#test-searxng')){
+      state.searxngTest={loading:true, ok:false, msg:''}; const m0=$('#main'); if(m0){m0.dataset.viewKey='';} render();
+      try {
+        const res = await api('/api/tools/search', { method:'POST', body: JSON.stringify({ query: 'test connection' }) });
+        if(res && res.source === 'searxng'){
+          state.searxngTest = { loading:false, ok:true, msg: `Connected to SearXNG (${res.instanceUrl||'configured instance'}). Returned ${(res.results||[]).length} result(s).` };
+        } else if (res && res.source === 'duckduckgo' && (res.status === 403 || /403/.test(String(res.warning||'')))) {
+          state.searxngTest = { loading:false, ok:false, msg: (res.warning || 'SearXNG returned 403.') + " Enable - json under search.formats in SearXNG's settings.yml, then retry." };
+        } else {
+          state.searxngTest = { loading:false, ok:false, msg: (res && res.warning) ? res.warning : 'SearXNG not reachable; fell back to DuckDuckGo.' };
+        }
+      } catch (err) {
+        state.searxngTest = { loading:false, ok:false, msg: 'Test failed: ' + (err && err.message ? err.message : String(err)) };
+      }
+      const m1=$('#main'); if(m1){m1.dataset.viewKey='';} render();
+      return;
+    }
+    const vtest=t.closest('[data-vtest]'); if(vtest){ const id=vtest.getAttribute('data-vtest'); if(id==='searxng'){ document.getElementById('test-searxng')?.click(); } else { alert(`Credential "${id}" is stored (encrypted). Runtime connectivity is verified when workflows execute using this credential.`); } }
   });
   document.addEventListener('input',(e)=>{ const t=e.target; if(!(t instanceof Element)) return; if(t.id==='wf-name') state.workflow.name=t.value; if(t.id==='chat-input') state.chatInput=t.value; if(t.id==='chat-provider') state.chatProvider=t.value; if(t.id==='chat-custom-model') state.chatCustomModel=t.value; if(t.id==='set-provider') state.aiSettings.provider=t.value; if(t.id==='set-custom-model') state.aiSettings.customModelId=t.value; if(t.id==='set-gemini-key') state.aiSettings.geminiKey=t.value; if(t.id==='set-groq-key') state.aiSettings.groqKey=t.value; if(t.id==='set-openrouter-key') state.aiSettings.openrouterKey=t.value; if(t.closest('#v-kv')){ const i=Number(t.getAttribute('data-i')); const k=t.getAttribute('data-k'); if(state._vaultKV&&state._vaultKV[i]) state._vaultKV[i][k]=t.value; } });
   document.addEventListener('submit', async (e)=>{ const t=e.target; if(!(t instanceof Element)) return; if(t.id==='vault-form'){ e.preventDefault(); const serviceId=$('#v-serviceId').value.trim(); const label=$('#v-label').value.trim(); const secretData={}; for(const p of (state._vaultKV||[])){ if(p.key&&p.key.trim()) secretData[p.key.trim()]=p.value; } if(!Object.keys(secretData).length) return alert('Add at least one secret field.'); try{ await api('/api/vault',{method:'POST',body:JSON.stringify({serviceId,label,secretData})}); state._vaultKV=[{key:'',value:''}]; await refreshVault(); renderCredentialRows(); if(state.returnTo==='workflow'){ state.nav='assistant'; state.returnTo=null; } const main=$('#main'); if(main){main.dataset.viewKey='';} render(); }catch(err){ alert(err.message);} } });

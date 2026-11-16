@@ -2,6 +2,7 @@ import type { Env } from "./types";
 import { handleVaultRequest } from "./vault";
 import { handleAgentRequest } from "./agent/routes";
 import { handleChatRequest } from "./agent/chat";
+import { handleToolsRequest } from "./agent/tools";
 import { handleOAuthStart, handleOAuthCallback } from "./vault/oauth";
 
 export { AgentDurableObject } from "./agent/durable";
@@ -17,6 +18,9 @@ export default {
 
     if (url.pathname.startsWith("/api/vault")) {
       return handleVaultRequest(request, env, url);
+    }
+    if (url.pathname.startsWith("/api/tools/")) {
+      return handleToolsRequest(request, env, url);
     }
     if (url.pathname.startsWith("/api/agent/chat")) {
       return handleChatRequest(request, env, url);
