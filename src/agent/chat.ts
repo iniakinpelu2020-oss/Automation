@@ -37,9 +37,11 @@ export async function handleChatRequest(request: Request, env: Env, url: URL): P
       if (!message) return json({ error: "message required" }, 400);
 
       const system = `You are an expert n8n-style workflow automation assistant and code generator.
+Classify intent into action: "build" (create new workflow from scratch), "edit" (modify the provided currentWorkflow/workflowGraph), "execute" (user explicitly wants to run/execute the current workflow now), or "chat" (explanations/questions only, no workflow changes needed).
 Return ONLY a single valid JSON object (no markdown fences, no extra text) with this exact shape:
 {
-  "explanation": "Step-by-step explanation and setup guide in markdown. Include any helpful details.",
+  "action": "build" | "edit" | "execute" | "chat",
+  "explanation": "Clear markdown explanation. Never include raw JSON here.",
   "codeBlocks": [{"language":"javascript","title":"optional title","code":"..."}],
   "workflowGraph": {
     "nodes": [
@@ -51,14 +53,14 @@ Return ONLY a single valid JSON object (no markdown fences, no extra text) with 
   "requiredCredentials": ["youtube","gmail","drive","sheets","twitter","openai","webhook"]
 }
 Rules:
-- Always include workflowGraph with at least a trigger node and relevant nodes/edges; positions should form a clear left-to-right layout.
-- If a currentWorkflow/workflowGraph is provided in context, MODIFY and return the updated complete workflowGraph conversationally based on the user's latest request (do not repeat an unrelated initial workflow).
-- Use type 'code' with subtype 'js' for JavaScript/transform nodes; put code in config.code. Code nodes receive $input (previous node output) and $secrets (object of attached decrypted credential).
-- Use type 'ai' for AI steps (config.prompt, config.model can be set to user-selected model when relevant).
-- Use type 'action' for app/HTTP nodes (subtypes: http, twitter, youtube, gmail, drive, sheets, telegram, discord). Put url/method/body in config and credentialId when a saved vault credential is needed.
-- requiredCredentials must list service ids the user needs connected (use google_youtube/google_gmail/google_drive/google_sheets or twitter/openai/webhook/custom as appropriate; include both plain and google_ prefixed forms when relevant, e.g. ['google_youtube','youtube']).
-- codeBlocks is optional array of any standalone code snippets to show in chat.
-- Be practical and complete.`;
+- Set action="execute" when the user clearly asks to run/execute/start the workflow now (e.g. "Oya", "Run it", "Execute", "run this now"). If action is "execute", still include the current/updated workflowGraph (complete) and requiredCredentials; the client may auto-run if connections are present.
+- For action "build": return a complete new workflowGraph (>= trigger + needed nodes) with left-to-right positions.
+- For action "edit": MODIFY the provided currentWorkflow/workflowGraph and return the COMPLETE updated workflowGraph.
+- For action "chat": you may return minimal workflowGraph (keep current) or omit major changes; set workflowGraph to current if unsure. Do not invent a full unrelated workflow.
+- Never output raw JSON in explanation. Put code only in codeBlocks.
+- Use type 'code' subtype 'js' for transforms; config.code runs with $input,$secrets. Use type 'ai' for LLM steps. Use type 'action' for app/http with url/method/body in config.
+- requiredCredentials must list service ids needed (e.g. google_youtube,youtube,gmail,drive,sheets,twitter,openai,webhook). Include google_* variants where applicable.
+- Keep codeBlocks optional; include when helpful.`;
       const history = Array.isArray(body.history) ? body.history.slice(-12) : [];
       const current = body.workflow || body.workflowGraph || null;
       const userContent = JSON.stringify({ request: message, currentWorkflow: current, workflowGraph: current });
@@ -84,8 +86,14 @@ Rules:
       } catch {
         parsed = { explanation: aiRes.text, codeBlocks: [], workflowGraph: { nodes: [], edges: [], groups: [] }, requiredCredentials: [] };
       }
-      if (!parsed.workflowGraph) parsed.workflowGraph = { nodes: [], edges: [], groups: [] };
+      if (!parsed || typeof parsed !== 'object') parsed = {};
+      if (!parsed.action) parsed.action = 'chat';
+      if (!parsed.workflowGraph || typeof parsed.workflowGraph !== 'object') parsed.workflowGraph = { nodes: [], edges: [], groups: [] };
+      if (!Array.isArray(parsed.workflowGraph.nodes)) parsed.workflowGraph.nodes = [];
+      if (!Array.isArray(parsed.workflowGraph.edges)) parsed.workflowGraph.edges = [];
+      if (!Array.isArray(parsed.workflowGraph.groups)) parsed.workflowGraph.groups = [];
       if (!Array.isArray(parsed.requiredCredentials)) parsed.requiredCredentials = [];
+      if (!Array.isArray(parsed.codeBlocks)) parsed.codeBlocks = [];
 
       const chatId = body.chatId || crypto.randomUUID();
       await stub.fetch("https://do/chats/append", {

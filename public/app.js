@@ -31,6 +31,9 @@ const state = {
   vaultFocusService:null,
   returnTo:null,
   searxngTest:null,
+  inspectorTab: 'config',
+  autoFitOnNext: false,
+  activeExecutionId: null,
 };
 
 const $=(s,r=document)=>r.querySelector(s);
@@ -94,6 +97,26 @@ function deleteNode(id){ state.workflow.nodes=state.workflow.nodes.filter(n=>n.i
 function connectNodes(s,t){ if(s===t) return; if(state.workflow.edges.some(e=>e.source===s&&e.target===t)) return; state.workflow.edges.push({id:uid(),source:s,target:t}); }
 function getNode(id){ return state.workflow.nodes.find(n=>n.id===id); }
 function nodeStatus(id){ return state.runStatus[id]||'idle'; }
+function fitWorkflowToView(){
+  const wrap = $('#canvas-wrap');
+  const nodes = state.workflow.nodes || [];
+  if(!wrap || !nodes.length) return;
+  const rect = wrap.getBoundingClientRect();
+  if(rect.width < 50 || rect.height < 50) return;
+  const xs = nodes.map(n => (n.position && n.position.x) || 0);
+  const ys = nodes.map(n => (n.position && n.position.y) || 0);
+  const minX = Math.min(...xs), minY = Math.min(...ys);
+  const maxX = Math.max(...xs.map(x=>x+180));
+  const maxY = Math.max(...ys.map(y=>y+120));
+  const pad = 80;
+  const w = Math.max(200, maxX-minX+pad*2);
+  const h = Math.max(200, maxY-minY+pad*2);
+  const z = Math.max(0.3, Math.min(1.2, Math.min(rect.width/w, rect.height/h)));
+  state.zoom = z;
+  state.pan.x = (rect.width - (maxX-minX)*z)/2 - minX*z + pad*z/4;
+  state.pan.y = (rect.height - (maxY-minY)*z)/2 - minY*z + pad*z/4;
+}
+
 function applyWorkflowGraph(graph){
   if(!graph || typeof graph !== 'object') return;
   const nodes = Array.isArray(graph.nodes) ? graph.nodes : [];
@@ -105,15 +128,18 @@ function applyWorkflowGraph(graph){
       type: n.type || 'action',
       subtype: n.subtype || '',
       name: n.name || n.subtype || n.type || ('Node '+(i+1)),
-      position: (n.position && typeof n.position.x==='number' && typeof n.position.y==='number') ? n.position : { x: 80 + (i%4)*260, y: 120 + Math.floor(i/4)*160 },
+      position: (n.position && typeof n.position.x==='number' && typeof n.position.y==='number') ? n.position : { x: 80 + (i%4)*260, y: 120 + Math.floor(i/4)*180 },
       config: (n.config && typeof n.config==='object') ? n.config : {},
       credentialId: n.credentialId || ''
     }));
   }
-  // update edges/groups when provided (or when nodes changed)
   if(nodes.length || Array.isArray(graph.edges)) state.workflow.edges = edges.map((e,i)=>({ id: e.id || ('e'+(i+1)), source: e.source, target: e.target })).filter(e=>e.source && e.target);
   if(nodes.length || Array.isArray(graph.groups)) state.workflow.groups = groups;
+  state.autoFitOnNext = nodes.length > 0;
   renderCanvas();
+  if(state.autoFitOnNext){
+    setTimeout(()=>{ fitWorkflowToView(); renderCanvas(); state.autoFitOnNext = false; }, 0);
+  }
 }
 
 function connectedServices(){ return new Set((state.vault||[]).map(v=>v.serviceId)); }
@@ -228,11 +254,18 @@ function renderCanvas(){
   const world=$('#canvas-world'); if(!world) return;
   world.style.transform=`translate(${state.pan.x}px,${state.pan.y}px) scale(${state.zoom})`;
   const groups=(state.workflow.groups||[]).map(g=>{ const nodes=(g.nodeIds||[]).map(id=>getNode(id)).filter(Boolean); if(!nodes.length) return ''; const xs=nodes.map(n=>n.position.x), ys=nodes.map(n=>n.position.y); const x=Math.min(...xs)-20, y=Math.min(...ys)-30, w=Math.max(...xs)+210-x, h=Math.max(...ys)+120-y; return `<div class="group-frame" style="left:${x}px;top:${y}px;width:${w}px;height:${h}px"><div class="group-label">${esc(g.label||'Group')}</div></div>`; }).join('');
-  const nodes=state.workflow.nodes.map(n=>{ const st=nodeStatus(n.id), sel=state.selectedNodeId===n.id?'selected':''; return `<div class="node ${sel}" data-node-id="${n.id}" style="left:${n.position?.x||0}px;top:${n.position?.y||0}px"><div class="port in"></div><div class="port out" data-port-out="${n.id}"></div><div data-drag-handle="${n.id}" class="cursor-grab active:cursor-grabbing"><div class="icon">${nodeIcon(n)}</div><div class="text-sm font-medium truncate">${esc(n.name||n.type)}</div><div class="text-[11px] truncate" style="color:var(--muted)">${esc(n.subtype||n.type)}</div><div class="mt-1">${badge(st)}</div></div></div>`; }).join('');
+  const nodes=state.workflow.nodes.map(n=>{ const st=nodeStatus(n.id), sel=state.selectedNodeId===n.id?'selected':''; const border = st==='running'?'border-color:#3b82f6;box-shadow:0 0 0 2px rgba(59,130,246,.25),0 10px 30px rgba(0,0,0,.35)': st==='success'?'border-color:#10b981;box-shadow:0 0 0 2px rgba(16,185,129,.2),0 10px 30px rgba(0,0,0,.35)': st==='error'?'border-color:#ef4444;box-shadow:0 0 0 2px rgba(239,68,68,.2),0 10px 30px rgba(0,0,0,.35)':''; const icon = st==='running'?'<span class="inline-block animate-spin">⟳</span>': st==='success'?'✓': st==='error'?'!':nodeIcon(n); return `<div class="node ${sel}" data-node-id="${n.id}" style="left:${n.position?.x||0}px;top:${n.position?.y||0}px;${border}"><div class="port in"></div><div class="port out" data-port-out="${n.id}"></div><div data-drag-handle="${n.id}" class="cursor-grab active:cursor-grabbing"><div class="icon">${icon}</div><div class="text-sm font-medium truncate">${esc(n.name||n.type)}</div><div class="text-[11px] truncate" style="color:var(--muted)">${esc(n.subtype||n.type)}</div><div class="mt-1">${badge(st)}</div></div></div>`; }).join('');
   world.innerHTML = renderEdgesSvg()+groups+nodes;
   bindCanvasEvents();
 }
-function renderCanvasStatus(){ $$('#canvas-world .node').forEach(el=>{ const id=el.getAttribute('data-node-id'); const b=el.querySelector('.badge'); if(b){ const tmp=document.createElement('div'); tmp.innerHTML=badge(nodeStatus(id)); b.replaceWith(tmp.firstChild); }}); }
+function renderCanvasStatus(){
+  $('#canvas-world .node').forEach(el=>{
+    const id=el.getAttribute('data-node-id'); const st=nodeStatus(id);
+    const b=el.querySelector('.badge'); if(b){ const tmp=document.createElement('div'); tmp.innerHTML=badge(st); b.replaceWith(tmp.firstChild); }
+    const iconWrap=el.querySelector('.icon'); if(iconWrap){ iconWrap.innerHTML = st==='running'?'<span class="inline-block animate-spin">⟳</span>': st==='success'?'✓': st==='error'?'!':nodeIcon(getNode(id)||{}); }
+    el.style.borderColor = st==='running'?'#3b82f6': st==='success'?'#10b981': st==='error'?'#ef4444':'';
+  });
+}
 function renderEdgesSvg(){
   const paths=state.workflow.edges.map(e=>{ const s=getNode(e.source),t=getNode(e.target); if(!s||!t) return ''; const x1=(s.position?.x||0)+180,y1=(s.position?.y||0)+50,x2=(t.position?.x||0),y2=(t.position?.y||0)+50; const dx=Math.max(60,Math.abs(x2-x1)*0.5); const d=`M ${x1} ${y1} C ${x1+dx} ${y1}, ${x2-dx} ${y2}, ${x2} ${y2}`; const st=nodeStatus(e.target); const color=st==='success'?'#10b981':st==='error'?'#ef4444':st==='running'?'#3b82f6':'#52525b'; return `<path d="${d}" stroke="${color}" stroke-width="2.5" fill="none" marker-end="url(#arrow-${st||'idle'})" />`; }).join('');
   return `<svg id="edges-svg" width="5000" height="4000"><defs>${['idle','running','success','error'].map(s=>{const c={idle:'#52525b',running:'#3b82f6',success:'#10b981',error:'#ef4444'}[s]; return `<marker id="arrow-${s}" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="${c}" /></marker>`;}).join('')}</defs>${paths}</svg>`;
@@ -246,21 +279,42 @@ function renderLogsOnly(){
 
 function providerOptions(selected){ const opts=[['auto','Auto (Gemini → Groq → Cloudflare)'],['gemini-flash','Gemini 3 Flash'],['gemini-pro','Gemini 3.1 Pro'],['groq','Groq (Llama 3.3 70B)'],['openrouter','OpenRouter'],['cloudflare','Cloudflare Workers AI'],['custom','Custom Model ID...']]; return opts.map(([v,l])=>`<option value="${v}" ${selected===v?'selected':''}>${l}</option>`).join(''); }
 
+function getLatestNodeOutput(nodeId){
+  for(const l of (state.logs||[])){
+    if(!l || !l.nodeLogs) continue;
+    try {
+      const nls = typeof l.nodeLogs === 'string' ? JSON.parse(l.nodeLogs) : l.nodeLogs;
+      const nl = Array.isArray(nls) ? nls.find(x=>x && x.nodeId===nodeId) : null;
+      if(nl) return nl.output !== undefined ? nl.output : nl;
+    } catch {}
+  }
+  return undefined;
+}
+
 function renderNodeDrawer(){
   const drawer=$('#node-drawer'); if(!drawer) return; const n=getNode(state.selectedNodeId);
   if(!n||!state.drawerOpen){ drawer.classList.remove('open'); drawer.innerHTML=''; return; }
   drawer.classList.add('open');
+  const tab = state.inspectorTab || 'config';
   const credOpts=`<option value="">— None —</option>`+state.vault.map(v=>`<option value="${esc(v.serviceId)}" ${n.credentialId===v.serviceId?'selected':''}>${esc(v.label||v.serviceId)}</option>`).join('');
   let fields='';
   if(n.type==='trigger'){ fields=`<label class="block mb-3"><span class="label">Trigger Type</span><select id="nd-subtype" class="select"><option value="manual" ${n.subtype==='manual'?'selected':''}>Manual Run</option><option value="webhook" ${n.subtype==='webhook'?'selected':''}>Webhook URL</option><option value="cron" ${n.subtype==='cron'?'selected':''}>Cron Schedule</option></select></label>${n.subtype==='cron'?`<label class="block mb-3"><span class="label">Cron Expression</span><input id="nd-cron" class="input" value="${esc(n.config?.cron||'0 9 * * *')}" /></label>`:''}`; }
   else if(n.type==='ai'){ fields=`<label class="block mb-3"><span class="label">Provider / Model</span><select id="nd-provider" class="select">${providerOptions(n.config?.provider||'auto')}</select></label><label class="block mb-3"><span class="label">Custom Model ID (optional)</span><input id="nd-custom-model" class="input" placeholder="e.g. gemini-3.1-pro-preview" value="${esc(n.config?.customModelId||'')}" /></label><label class="block mb-3"><span class="label">System Prompt</span><textarea id="nd-system" rows="2" class="input">${esc(n.config?.system||'')}</textarea></label><label class="block mb-3"><span class="label">Prompt ({{ $json.output }}, {{nodeId.output}})</span><textarea id="nd-prompt" rows="6" class="input">${esc(n.config?.prompt||'')}</textarea></label>`; }
   else if(n.type==='code'){ fields=`<label class="block mb-3"><span class="label">JavaScript ($input, $secrets)</span><textarea id="nd-code" rows="12" class="input" style="font-family:ui-monospace,monospace">${esc(n.config?.code||'return $input;')}</textarea></label>`; }
   else { fields=`<label class="block mb-3"><span class="label">Action Type</span><select id="nd-subtype" class="select">${[['twitter','X/Twitter'],['youtube','YouTube'],['gmail','Gmail'],['drive','Drive'],['sheets','Sheets'],['http','HTTP Request'],['webhook','Custom Webhook'],['telegram','Telegram'],['discord','Discord']].map(([v,l])=>`<option value="${v}" ${n.subtype===v?'selected':''}>${l}</option>`).join('')}</select></label><label class="block mb-3"><span class="label">HTTP Method</span><select id="nd-method" class="select">${['POST','GET','PUT','PATCH','DELETE'].map(m=>`<option ${String(n.config?.method||'POST').toUpperCase()===m?'selected':''}>${m}</option>`).join('')}</select></label><label class="block mb-3"><span class="label">URL / Endpoint</span><input id="nd-url" class="input" placeholder="https://..." value="${esc(n.config?.url||'')}" /></label><label class="block mb-3"><span class="label">Body / Message</span><textarea id="nd-body" rows="5" class="input">${esc(typeof n.config?.body==='string'?n.config.body:(n.config?.body?JSON.stringify(n.config.body,null,2):(n.config?.message||'')))}</textarea></label>`; }
-  drawer.innerHTML = `<div class="h-full flex flex-col" style="background:var(--bg2);border-left:1px solid var(--border)"><div class="p-4 border-b flex items-center justify-between" style="border-color:var(--border)"><div><div class="text-xs" style="color:var(--muted)">Node Inspector</div><div class="font-semibold">${esc(n.name)}</div></div><button id="nd-close" class="text-xl">&times;</button></div>
-    <div class="flex-1 overflow-auto scrollbar p-4"><label class="block mb-3"><span class="label">Node Name</span><input id="nd-name" class="input" value="${esc(n.name||'')}" /></label>${fields}
+  const out = getLatestNodeOutput(n.id);
+  const outStr = out===undefined ? 'No output yet. Run the workflow to see this node\'s latest output.' : (typeof out==='string' ? out : JSON.stringify(out, null, 2));
+  const configHtml = `<label class="block mb-3"><span class="label">Node Name</span><input id="nd-name" class="input" value="${esc(n.name||'')}" /></label>${fields}
       <label class="block mb-3"><span class="label">Attached Vault Credential</span><div class="flex gap-2"><select id="nd-cred" class="select flex-1">${credOpts}</select><button id="nd-add-cred" class="btn text-xs">+ Add</button></div></label>
-      <div class="text-xs p-2 rounded" style="background:#18181b;border:1px solid var(--border);color:var(--muted)">Variables: <code>{{ $json.output }}</code>, <code>{{$input}}</code>, <code>{{nodeId.output}}</code>. Code nodes receive <code>$input</code> and <code>$secrets</code>.</div>
-    </div><div class="p-4 border-t flex gap-2" style="border-color:var(--border)"><button id="nd-save" class="btn btn-primary flex-1">Save</button><button id="nd-delete" class="btn" style="color:#fca5a5">Delete</button></div></div>`;
+      <div class="text-xs p-2 rounded" style="background:#18181b;border:1px solid var(--border);color:var(--muted)">Variables: <code>{{ $json.output }}</code>, <code>{{$input}}</code>, <code>{{nodeId.output}}</code>. Code nodes receive <code>$input</code> and <code>$secrets</code>.</div>`;
+  const outputHtml = `<div class="mb-2 text-xs" style="color:var(--muted)">Latest execution output for this node (read-only).</div><pre class="text-xs p-3 rounded overflow-auto scrollbar" style="background:#0f0f12;border:1px solid #2f2f35;white-space:pre-wrap;max-height:60vh">${esc(outStr)}</pre>`;
+  drawer.innerHTML = `<div class="h-full flex flex-col" style="background:var(--bg2);border-left:1px solid var(--border)">
+    <div class="p-4 border-b" style="border-color:var(--border)"><div class="flex items-center justify-between"><div><div class="text-xs" style="color:var(--muted)">Node Inspector</div><div class="font-semibold">${esc(n.name)}</div></div><button id="nd-close" class="text-xl">&times;</button></div>
+      <div class="flex gap-2 mt-3"><button data-nd-tab="config" class="btn text-xs ${tab==='config'?'btn-primary':''}">Parameters / Config</button><button data-nd-tab="output" class="btn text-xs ${tab==='output'?'btn-primary':''}">Output JSON</button></div>
+    </div>
+    <div class="flex-1 overflow-auto scrollbar p-4">${tab==='output'?outputHtml:configHtml}</div>
+    ${tab==='output'?`<div class="p-4 border-t" style="border-color:var(--border)"><button id="nd-close2" class="btn w-full">Close</button></div>`:`<div class="p-4 border-t flex gap-2" style="border-color:var(--border)"><button id="nd-save" class="btn btn-primary flex-1">Save</button><button id="nd-delete" class="btn" style="color:#fca5a5">Delete</button></div>`}
+  </div>`;
   bindDrawerEvents();
 }
 
@@ -489,6 +543,8 @@ function bindCanvasEvents(){
 
 function bindDrawerEvents(){
   $('#nd-close')?.addEventListener('click',()=>{ state.drawerOpen=false; renderNodeDrawer(); });
+  $('#nd-close2')?.addEventListener('click',()=>{ state.drawerOpen=false; renderNodeDrawer(); });
+  $('[data-nd-tab]').forEach(btn=>btn.addEventListener('click',()=>{ state.inspectorTab = btn.getAttribute('data-nd-tab') || 'config'; renderNodeDrawer(); }));
   $('#nd-delete')?.addEventListener('click',()=>{ if(state.selectedNodeId) deleteNode(state.selectedNodeId); });
   $('#nd-add-cred')?.addEventListener('click',()=>{ state.drawerOpen=false; renderNodeDrawer(); openVaultForService('custom-webhook', false); });
   $('#nd-save')?.addEventListener('click',()=>{
@@ -543,22 +599,37 @@ async function sendChat(text){
 
     state.activeChatId = res.chatId || state.activeChatId;
     const explanation = (res && typeof res.explanation === 'string') ? res.explanation : '';
+    const action = (res && res.action) ? String(res.action) : 'chat';
     const assistantMsg = {
       role:'assistant',
       content: explanation,
-      data: res || {},
+      data: { ...(res||{}), action },
       aiMeta: res && res.aiMeta ? res.aiMeta : undefined,
       ts: new Date().toISOString()
     };
     state.chatMessages.push(assistantMsg);
 
-    // Immediately update live workflow graph on canvas and required credential cards
-    if(res && res.workflowGraph && typeof res.workflowGraph === 'object') applyWorkflowGraph(res.workflowGraph);
-    else renderCanvas();
     if(res && Array.isArray(res.requiredCredentials)) state.requiredCredentials = res.requiredCredentials;
+    else state.requiredCredentials = [];
+    const hasGraph = !!(res && res.workflowGraph && ((Array.isArray(res.workflowGraph.nodes) && res.workflowGraph.nodes.length) || (Array.isArray(res.workflowGraph.edges) && res.workflowGraph.edges.length)));
+    if(hasGraph){
+      applyWorkflowGraph(res.workflowGraph); // updates workflow state, renders nodes/edges, centers view
+    } else {
+      renderCanvas();
+    }
 
     renderChatPanel();
     await refreshChats();
+
+    if(action === 'execute'){
+      const missing = (state.requiredCredentials||[]).filter(r=>!isCredConnected(r));
+      if(missing.length){
+        state.chatMessages.push({role:'assistant', content:`Cannot execute yet: missing required connections (${missing.join(', ')}). Please connect them above, then run again.`, data:{}, ts:new Date().toISOString()});
+        renderChatPanel();
+      } else {
+        await executeWorkflow();
+      }
+    }
   }catch(e){
     state.chatMessages.push({role:'assistant',content:'Error: '+(e.message||'failed'),ts:new Date().toISOString()});
     renderChatPanel();
@@ -567,7 +638,49 @@ async function sendChat(text){
 }
 
 async function saveWorkflow(){ try{ state.workflow.name=$('#wf-name')?.value||state.workflow.name||'Untitled workflow'; const body={id:state.workflow.id||undefined,name:state.workflow.name,data:{nodes:state.workflow.nodes,edges:state.workflow.edges,groups:state.workflow.groups,triggerType:state.workflow.triggerType}}; const res=await api('/api/agent/workflows',{method:'POST',body:JSON.stringify(body)}); if(res&&res.id) state.workflow.id=res.id; await refreshWorkflows(); alert('Workflow saved'); }catch(e){ alert('Save failed: '+e.message); } }
-async function executeWorkflow(){ try{ state.runStatus={}; renderCanvas(); state.workflow.name=$('#wf-name')?.value||state.workflow.name; if(!state.workflow.nodes.length){ alert('Add at least one node.'); return; } await api('/api/agent/run',{method:'POST', body: JSON.stringify({workflowId:state.workflow.id,workflowName:state.workflow.name,nodes:state.workflow.nodes,edges:state.workflow.edges,triggerType:state.workflow.triggerType||'manual'})}); state.execOpen=true; await refreshLogs(); }catch(e){ alert('Execution failed: '+e.message); } }
+async function pollExecution(logId){
+  if(!logId) return null;
+  state.activeExecutionId = logId;
+  const started = Date.now();
+  const timeoutMs = 180000;
+  while(Date.now() - started < timeoutMs){
+    try {
+      await refreshLogs();
+      const log = (state.logs||[]).find(l=>l && l.id===logId) || (state.logs||[])[0];
+      if(log && log.nodeLogs){
+        try {
+          const nls = typeof log.nodeLogs === 'string' ? JSON.parse(log.nodeLogs) : log.nodeLogs;
+          if(Array.isArray(nls)){
+            const map = { ...state.runStatus };
+            for(const nl of nls){ if(nl && nl.nodeId) map[nl.nodeId] = nl.status || map[nl.nodeId] || 'idle'; }
+            state.runStatus = map;
+            renderCanvas(); renderCanvasStatus();
+            if(state.drawerOpen) renderNodeDrawer();
+          }
+        } catch {}
+      }
+      renderLogsOnly();
+      if(log && (log.status==='completed' || log.status==='failed')) return log;
+    } catch {}
+    await new Promise(r=>setTimeout(r, 1200));
+  }
+  return null;
+}
+
+async function executeWorkflow(){
+  try{
+    state.runStatus={};
+    for(const n of (state.workflow.nodes||[])) state.runStatus[n.id]='idle';
+    renderCanvas();
+    state.workflow.name=$('#wf-name')?.value||state.workflow.name;
+    if(!state.workflow.nodes.length){ alert('Add at least one node.'); return; }
+    const res = await api('/api/agent/run',{method:'POST', body: JSON.stringify({workflowId:state.workflow.id,workflowName:state.workflow.name,nodes:state.workflow.nodes,edges:state.workflow.edges,groups:state.workflow.groups||[],triggerType:state.workflow.triggerType||'manual'})});
+    state.execOpen=true;
+    await refreshLogs();
+    if(res && res.logId) await pollExecution(res.logId);
+    else await pollExecution(null);
+  }catch(e){ alert('Execution failed: '+(e.message||e)); }
+}
 
 let pollTimer=null; function startPolling(){ if(pollTimer) clearInterval(pollTimer); pollTimer=setInterval(async ()=>{ if(!state.user) return; if(isEditing()) return; await refreshLogs(); }, 3000); }
 
