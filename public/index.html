@@ -2,333 +2,687 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Automation Platform</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>Automation Workflow Builder</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
-    tailwind.config = {
-      theme: {
-        extend: {
-          colors: {
-            brand: { 500: '#6366f1', 600: '#4f46e5', 700: '#4338ca' }
-          }
-        }
-      }
-    }
+    tailwind.config = { theme: { extend: { colors: { brand: { 500:'#6366f1',600:'#4f46e5',700:'#4338ca' } } } } }
   </script>
   <style>
-    body { background: #0b1020; }
-    .glass { background: rgba(17,24,39,0.7); backdrop-filter: blur(10px); border: 1px solid rgba(148,163,184,0.15); }
-    .scrollbar::-webkit-scrollbar { height: 8px; width: 8px; }
-    .scrollbar::-webkit-scrollbar-thumb { background: #334155; border-radius: 9999px; }
+    html,body{height:100%;margin:0;background:#0b1020;color:#e5e7eb;font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto}
+    .glass{background:rgba(17,24,39,.78);backdrop-filter:blur(10px);border:1px solid rgba(148,163,184,.15)}
+    .scrollbar::-webkit-scrollbar{height:8px;width:8px}.scrollbar::-webkit-scrollbar-thumb{background:#334155;border-radius:9999px}
+    #canvas-wrap{position:relative;overflow:hidden;touch-action:none;background-color:#0b1224;background-image:radial-gradient(rgba(148,163,184,.18) 1px, transparent 1px);background-size:22px 22px}
+    #canvas-world{position:absolute;top:0;left:0;transform-origin:0 0}
+    #edges-svg{position:absolute;top:0;left:0;overflow:visible;pointer-events:none}
+    .node{position:absolute;width:240px;border-radius:12px;background:#111827;border:1px solid #334155;box-shadow:0 10px 30px rgba(0,0,0,.35);user-select:none}
+    .node.selected{border-color:#6366f1;box-shadow:0 0 0 2px rgba(99,102,241,.35),0 10px 30px rgba(0,0,0,.35)}
+    .node .port{width:12px;height:12px;border-radius:9999px;background:#475569;border:2px solid #0b1224;position:absolute;top:50%;transform:translateY(-50%)}
+    .node .port.in{left:-6px}.node .port.out{right:-6px;background:#6366f1;cursor:crosshair}
+    .badge{font-size:10px;padding:2px 8px;border-radius:9999px;border:1px solid}
+    .b-idle{background:#1f2937;color:#cbd5e1;border-color:#334155}
+    .b-running{background:rgba(59,130,246,.15);color:#93c5fd;border-color:rgba(59,130,246,.35)}
+    .b-success{background:rgba(16,185,129,.15);color:#6ee7b7;border-color:rgba(16,185,129,.35)}
+    .b-error{background:rgba(239,68,68,.15);color:#fca5a5;border-color:rgba(239,68,68,.35)}
+    .drawer{position:fixed;top:0;right:0;height:100%;width:420px;max-width:100%;transform:translateX(100%);transition:transform .25s ease;z-index:50}
+    .drawer.open{transform:translateX(0)}
+    .modal-bg{position:fixed;inset:0;background:rgba(2,6,23,.6);backdrop-filter:blur(2px);z-index:40;display:none}
+    .modal-bg.open{display:flex}
+    .exec-drawer{position:fixed;left:0;right:0;bottom:0;height:260px;transform:translateY(calc(100% - 40px));transition:transform .25s ease;z-index:30}
+    .exec-drawer.open{transform:translateY(0)}
+    .btn{border-radius:8px;padding:.5rem .85rem;font-weight:500}
+    .input{width:100%;border-radius:8px;background:rgba(15,23,42,.7);border:1px solid #334155;padding:.5rem .75rem;color:#e5e7eb}
+    .input:focus{outline:none;box-shadow:0 0 0 2px rgba(99,102,241,.4);border-color:#6366f1}
+    .label{font-size:.75rem;color:#94a3b8;margin-bottom:.25rem;display:block}
   </style>
 </head>
-<body class="min-h-screen text-slate-100">
-  <div id="app" class="min-h-screen"></div>
+<body class="h-full">
+<div id="app" class="h-full"></div>
 
-  <script type="module">
-    import { initializeApp } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-app.js";
-    import {
-      getAuth, onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword,
-      GoogleAuthProvider, signInWithPopup, signOut
-    } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-auth.js";
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-app.js";
+import { getAuth, onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, GoogleAuthProvider, signInWithPopup, signOut } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-auth.js";
 
-    const firebaseConfig = {
-      apiKey: "AIzaSyBaK5EOnATL7D5zVexeQHGp7fuyq8KJBP8",
-      authDomain: "apexaiautomation.firebaseapp.com",
-      projectId: "apexaiautomation",
-      storageBucket: "apexaiautomation.firebasestorage.app",
-      messagingSenderId: "932730992269",
-      appId: "1:932730992269:web:fbbfce99bdd3857054d4c4",
-      measurementId: "G-Q4YXEWS8HS"
-    };
+const firebaseConfig = {
+  apiKey: "AIzaSyBaK5EOnATL7D5zVexeQHGp7fuyq8KJBP8",
+  authDomain: "apexaiautomation.firebaseapp.com",
+  projectId: "apexaiautomation",
+  storageBucket: "apexaiautomation.firebasestorage.app",
+  messagingSenderId: "932730992269",
+  appId: "1:932730992269:web:fbbfce99bdd3857054d4c4",
+  measurementId: "G-Q4YXEWS8HS"
+};
+const fbApp = initializeApp(firebaseConfig);
+const auth = getAuth(fbApp);
+const googleProvider = new GoogleAuthProvider();
 
-    const fbApp = initializeApp(firebaseConfig);
-    const auth = getAuth(fbApp);
-    const googleProvider = new GoogleAuthProvider();
+const state = {
+  user: null, token: null, view: 'builder', // builder
+  vault: [], logs: [], workflows: [],
+  workflow: { id: null, name: 'My Workflow', nodes: [], edges: [], triggerType: 'manual' },
+  selectedNodeId: null, connectingFrom: null,
+  pan: { x: 40, y: 40 }, zoom: 1,
+  drawerOpen: false, vaultModalOpen: false, execOpen: false, addMenuOpen: false,
+  error: '', vaultKV: [{key:'',value:''}],
+  runStatus: {}, // nodeId -> status
+  isPointerDown: false, panStart: null, dragNode: null,
+  authMode: 'signin'
+};
 
-    const state = {
-      user: null,
-      token: null,
-      tab: 'vault',
-      vault: [],
-      logs: [],
-      loading: false,
-      error: '',
-      kvPairs: [{ key: '', value: '' }]
-    };
+const $ = (s, r=document) => r.querySelector(s);
+const $$ = (s, r=document) => Array.from(r.querySelectorAll(s));
+const esc = (s='') => String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const uid = () => (crypto.randomUUID ? crypto.randomUUID() : 'id-'+Math.random().toString(36).slice(2,10));
 
-    const $ = (sel) => document.querySelector(sel);
-    function setError(msg) { state.error = msg || ''; render(); }
-    function escapeHtml(s='') { return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+async function api(path, opts={}) {
+  const headers = Object.assign({'Content-Type':'application/json'}, opts.headers||{});
+  if (state.token) headers['Authorization'] = `Bearer ${state.token}`;
+  const res = await fetch(path, { ...opts, headers });
+  const text = await res.text();
+  let data=null; try{data=text?JSON.parse(text):null;}catch{data={raw:text};}
+  if(!res.ok) throw new Error((data&&(data.error||data.message)) || `Request failed (${res.status})`);
+  return data;
+}
 
-    async function api(path, opts = {}) {
-      const headers = Object.assign({ 'Content-Type': 'application/json' }, opts.headers || {});
-      if (state.token) headers['Authorization'] = `Bearer ${state.token}`;
-      const res = await fetch(path, { ...opts, headers });
-      const text = await res.text();
-      let data = null; try { data = text ? JSON.parse(text) : null; } catch { data = { raw: text }; }
-      if (!res.ok) throw new Error((data && (data.error || data.message)) || `Request failed (${res.status})`);
-      return data;
-    }
+function isEditing() {
+  const ae = document.activeElement;
+  if (!ae) return false;
+  const tag = ae.tagName;
+  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || ae.isContentEditable) return true;
+  return state.drawerOpen || state.vaultModalOpen;
+}
 
-    async function refreshVault() {
+async function refreshVault(){ try{ state.vault = await api('/api/vault'); }catch(e){ /* silent */ } }
+async function refreshLogs(){
+  try{
+    const data = await api('/api/agent/logs');
+    state.logs = data.logs || [];
+    // derive latest node statuses from most recent running/completed log if matches current workflow
+    const latest = state.logs[0];
+    if (latest && latest.nodeLogs) {
       try {
-        state.vault = await api('/api/vault');
-      } catch (e) { setError(e.message); }
+        const nls = JSON.parse(latest.nodeLogs);
+        const map = {};
+        for (const nl of nls) map[nl.nodeId] = nl.status;
+        state.runStatus = map;
+      } catch {}
     }
-    async function refreshLogs() {
-      try {
-        const data = await api('/api/agent/logs');
-        state.logs = data.logs || [];
-      } catch (e) { /* silent on poll */ }
-    }
+    renderLogsOnly();
+  }catch(e){ /* silent */ }
+}
+async function refreshWorkflows(){ try{ const d=await api('/api/agent/workflows'); state.workflows=d.workflows||[]; }catch{} }
 
-    function renderAuth() {
-      return `
-      <div class="min-h-screen flex items-center justify-center p-4">
-        <div class="w-full max-w-md glass rounded-2xl p-6 md:p-8 shadow-2xl">
-          <div class="mb-6">
-            <h1 class="text-2xl font-semibold">Automation Platform</h1>
-            <p class="text-slate-400 text-sm mt-1">Sign in to manage credentials and run AI automations.</p>
-          </div>
-          ${state.error ? `<div class="mb-4 rounded-lg bg-red-500/10 border border-red-500/30 text-red-200 px-3 py-2 text-sm">${escapeHtml(state.error)}</div>` : ''}
-          <form id="auth-form" class="space-y-3">
-            <input id="email" type="email" required placeholder="Email" class="w-full rounded-lg bg-slate-900/70 border border-slate-700 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-brand-500" />
-            <input id="password" type="password" required placeholder="Password" class="w-full rounded-lg bg-slate-900/70 border border-slate-700 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-brand-500" />
-            <div class="grid grid-cols-2 gap-2 pt-1">
-              <button id="signin-btn" type="submit" class="rounded-lg bg-brand-600 hover:bg-brand-700 px-4 py-2 font-medium">Sign in</button>
-              <button id="signup-btn" type="button" class="rounded-lg bg-slate-700 hover:bg-slate-600 px-4 py-2 font-medium">Sign up</button>
-            </div>
-          </form>
-          <div class="my-4 flex items-center gap-3 text-slate-500 text-xs"><div class="h-px bg-slate-700 flex-1"></div>OR<div class="h-px bg-slate-700 flex-1"></div></div>
-          <button id="google-btn" class="w-full rounded-lg border border-slate-600 hover:bg-slate-800 px-4 py-2 font-medium">Continue with Google</button>
+function defaultNode(type, subtype) {
+  const base = { id: uid(), type, subtype, name: '', position: { x: 120 + state.workflow.nodes.length*40, y: 120 + state.workflow.nodes.length*30 }, config: {}, credentialId: '' };
+  if (type==='trigger') { base.name = subtype==='cron'?'Cron Schedule': subtype==='webhook'?'Webhook':'Manual Trigger'; if(subtype==='cron') base.config={cron:'0 * * * *'}; }
+  if (type==='ai') { base.name='AI Agent'; base.config={prompt:'Summarize: {{ $json.output }}', model:'@cf/meta/llama-3.3-70b-instruct-fp8-fast', system:'You are a helpful automation agent.'}; }
+  if (type==='action') {
+    const names={twitter:'X/Twitter Post',youtube:'YouTube Action',http:'HTTP Request',telegram:'Telegram',discord:'Discord',webhook:'Custom Webhook'};
+    base.name = names[subtype] || 'Action';
+    base.config = subtype==='http'||subtype==='webhook' ? {url:'',method:'POST',body:'{"text":"{{ $json.output }}"}'} : {message:'{{ $json.output }}'};
+  }
+  return base;
+}
+
+function addNode(type, subtype){
+  const n = defaultNode(type, subtype);
+  // place near center of view
+  const wrap = $('#canvas-wrap');
+  if (wrap) {
+    const rect = wrap.getBoundingClientRect();
+    n.position = { x: (rect.width/2 - state.pan.x)/state.zoom - 120, y: (rect.height/2 - state.pan.y)/state.zoom - 40 };
+  }
+  state.workflow.nodes.push(n);
+  state.addMenuOpen=false;
+  renderCanvas();
+}
+
+function deleteNode(id){
+  state.workflow.nodes = state.workflow.nodes.filter(n=>n.id!==id);
+  state.workflow.edges = state.workflow.edges.filter(e=>e.source!==id && e.target!==id);
+  if (state.selectedNodeId===id) { state.selectedNodeId=null; state.drawerOpen=false; }
+  renderCanvas();
+}
+
+function connectNodes(source,target){
+  if(source===target) return;
+  if(state.workflow.edges.some(e=>e.source===source && e.target===target)) return;
+  state.workflow.edges.push({id:uid(), source, target});
+}
+
+function getNode(id){ return state.workflow.nodes.find(n=>n.id===id); }
+function nodeStatus(id){ return state.runStatus[id] || 'idle'; }
+
+function renderAuth(){
+  return `<div class="min-h-screen flex items-center justify-center p-4">
+    <div class="w-full max-w-md glass rounded-2xl p-6 md:p-8 shadow-2xl">
+      <h1 class="text-2xl font-semibold">Workflow Automation</h1>
+      <p class="text-slate-400 text-sm mt-1 mb-5">Sign in to build n8n-style automations with encrypted credentials.</p>
+      ${state.error?`<div class="mb-3 rounded-lg bg-red-500/10 border border-red-500/30 text-red-200 px-3 py-2 text-sm">${esc(state.error)}</div>`:''}
+      <form id="auth-form" class="space-y-3">
+        <input id="email" type="email" required placeholder="Email" class="input" />
+        <input id="password" type="password" required placeholder="Password" class="input" />
+        <div class="grid grid-cols-2 gap-2 pt-1">
+          <button class="btn bg-brand-600 hover:bg-brand-700" type="submit">Sign in</button>
+          <button id="signup-btn" class="btn bg-slate-700 hover:bg-slate-600" type="button">Sign up</button>
         </div>
-      </div>`;
-    }
+      </form>
+      <div class="my-4 flex items-center gap-3 text-slate-500 text-xs"><div class="h-px bg-slate-700 flex-1"></div>OR<div class="h-px bg-slate-700 flex-1"></div></div>
+      <button id="google-btn" class="w-full btn border border-slate-600 hover:bg-slate-800">Continue with Google</button>
+    </div></div>`;
+}
 
-    function renderKVFields() {
-      return state.kvPairs.map((p, i) => `
-        <div class="grid grid-cols-12 gap-2">
-          <input data-k="key" data-i="${i}" value="${escapeHtml(p.key)}" placeholder="Key (e.g. apiKey)" class="col-span-5 rounded-lg bg-slate-900/70 border border-slate-700 px-3 py-2 text-sm" />
-          <input data-k="value" data-i="${i}" value="${escapeHtml(p.value)}" placeholder="Value / secret" class="col-span-6 rounded-lg bg-slate-900/70 border border-slate-700 px-3 py-2 text-sm" />
-          <button data-remove-kv="${i}" type="button" class="col-span-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300">×</button>
-        </div>`).join('');
-    }
+function nodeIcon(n){
+  if(n.type==='trigger') return '⚡';
+  if(n.type==='ai') return '🧠';
+  const m={twitter:'𝕏',youtube:'▶',telegram:'✈',discord:'💬',http:'⇄',webhook:'⇄'};
+  return m[n.subtype]||'⚙';
+}
 
-    function renderVault() {
-      const items = state.vault;
-      return `
-      <div class="grid lg:grid-cols-2 gap-4">
-        <div class="glass rounded-xl p-4 md:p-5">
-          <h2 class="text-lg font-semibold mb-1">Add / Update Credential</h2>
-          <p class="text-slate-400 text-sm mb-4">Secrets are encrypted client-side server-encrypted and stored in your Firestore vault. They are never listed back.</p>
-          ${state.error ? `<div class="mb-3 rounded-lg bg-red-500/10 border border-red-500/30 text-red-200 px-3 py-2 text-sm">${escapeHtml(state.error)}</div>` : ''}
-          <form id="vault-form" class="space-y-3">
-            <div class="grid sm:grid-cols-2 gap-2">
-              <input id="serviceId" placeholder="Service ID (e.g. twitter, openai)" required class="rounded-lg bg-slate-900/70 border border-slate-700 px-3 py-2" />
-              <input id="label" placeholder="Label (e.g. X/Twitter Main)" required class="rounded-lg bg-slate-900/70 border border-slate-700 px-3 py-2" />
-            </div>
-            <div class="flex items-center justify-between">
-              <span class="text-sm text-slate-300">Secret fields</span>
-              <button id="add-kv" type="button" class="text-sm text-brand-500 hover:text-indigo-300">+ Add field</button>
-            </div>
-            <div id="kv-container" class="space-y-2">${renderKVFields()}</div>
-            <button class="w-full rounded-lg bg-brand-600 hover:bg-brand-700 px-4 py-2 font-medium">Save credential</button>
-          </form>
+function badge(status){
+  const c={idle:'b-idle',running:'b-running',success:'b-success',error:'b-error'}[status]||'b-idle';
+  const label={idle:'Idle',running:'Running',success:'Success',error:'Error'}[status]||'Idle';
+  return `<span class="badge ${c}">${label}</span>`;
+}
+
+function renderNodesHtml(){
+  return state.workflow.nodes.map(n=>{
+    const st = nodeStatus(n.id);
+    const sel = state.selectedNodeId===n.id ? 'selected':'';
+    return `<div class="node ${sel}" data-node-id="${n.id}" style="left:${n.position?.x||0}px;top:${n.position?.y||0}px">
+      <div class="port in"></div>
+      <div class="port out" data-port-out="${n.id}" title="Drag to connect"></div>
+      <div class="p-3 cursor-grab active:cursor-grabbing" data-drag-handle="${n.id}">
+        <div class="flex items-center justify-between mb-1">
+          <div class="flex items-center gap-2 min-w-0"><span class="text-lg">${nodeIcon(n)}</span><span class="font-medium text-sm truncate">${esc(n.name||n.type)}</span></div>
+          ${badge(st)}
         </div>
-        <div class="glass rounded-xl p-4 md:p-5">
-          <div class="flex items-center justify-between mb-3">
-            <h2 class="text-lg font-semibold">Connected Services</h2>
-            <button id="refresh-vault" class="text-sm text-slate-300 hover:text-white">Refresh</button>
+        <div class="text-xs text-slate-400 truncate">${esc(n.subtype||n.type)} ${n.credentialId?`· 🔑 ${esc(n.credentialId)}`:''}</div>
+        ${n.type==='ai'?`<div class="text-[11px] text-slate-500 mt-1 truncate">${esc((n.config?.prompt||'').toString().slice(0,60))}</div>`:''}
+        ${n.type==='action' && n.config?.url?`<div class="text-[11px] text-slate-500 mt-1 truncate">${esc(String(n.config.method||'POST'))} ${esc(String(n.config.url))}</div>`:''}
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function renderEdgesSvg(){
+  const w = 4000, h = 3000;
+  const paths = state.workflow.edges.map(e=>{
+    const s=getNode(e.source), t=getNode(e.target); if(!s||!t) return '';
+    const x1=(s.position?.x||0)+240, y1=(s.position?.y||0)+40;
+    const x2=(t.position?.x||0), y2=(t.position?.y||0)+40;
+    const dx=Math.max(60, Math.abs(x2-x1)*0.5);
+    const d=`M ${x1} ${y1} C ${x1+dx} ${y1}, ${x2-dx} ${y2}, ${x2} ${y2}`;
+    const st=nodeStatus(e.target);
+    const color= st==='success'?'#10b981': st==='error'?'#ef4444': st==='running'?'#3b82f6':'#475569';
+    return `<path d="${d}" stroke="${color}" stroke-width="2.5" fill="none" marker-end="url(#arrow-${st||'idle'})" />`;
+  }).join('');
+  return `<svg id="edges-svg" width="${w}" height="${h}">
+    <defs>
+      ${['idle','running','success','error'].map(s=>{
+        const color={idle:'#475569',running:'#3b82f6',success:'#10b981',error:'#ef4444'}[s];
+        return `<marker id="arrow-${s}" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L0,6 L9,3 z" fill="${color}" /></marker>`;
+      }).join('')}
+    </defs>
+    ${paths}
+  </svg>`;
+}
+
+function renderCanvas(){
+  const world = $('#canvas-world');
+  const wrap = $('#canvas-wrap');
+  if(!world || !wrap) return;
+  world.style.transform = `translate(${state.pan.x}px, ${state.pan.y}px) scale(${state.zoom})`;
+  world.innerHTML = renderEdgesSvg() + renderNodesHtml();
+  bindCanvasEvents();
+}
+
+function renderLogsOnly(){
+  const c = $('#logs-list'); if(!c) return;
+  if(!state.logs.length){ c.innerHTML = `<div class="text-slate-400 text-sm p-3">No executions yet.</div>`; return; }
+  c.innerHTML = state.logs.map(l=>{
+    let nodeHtml='';
+    if(l.nodeLogs){ try{ const nls=JSON.parse(l.nodeLogs); nodeHtml = `<div class="mt-2 flex flex-wrap gap-1">${nls.map(n=>`<span class="badge ${n.status==='success'?'b-success':n.status==='error'?'b-error':n.status==='running'?'b-running':'b-idle'}">${esc(n.name)}: ${esc(n.status)}</span>`).join('')}</div>`;}catch{} }
+    const res = l.result ? `<pre class="mt-2 text-xs bg-slate-950/60 border border-slate-800 rounded p-2 whitespace-pre-wrap break-words max-h-40 overflow-auto scrollbar">${esc(String(l.result).slice(0,4000))}</pre>` : '';
+    const err = l.error ? `<pre class="mt-2 text-xs text-red-200 bg-red-500/10 border border-red-500/20 rounded p-2 whitespace-pre-wrap break-words">${esc(l.error)}</pre>` : '';
+    const label = l.workflowName || l.prompt || 'Run';
+    const bc = l.status==='completed'?'b-success':l.status==='failed'?'b-error':l.status==='running'?'b-running':'b-idle';
+    return `<div class="rounded-lg border border-slate-700 bg-slate-900/50 p-3">
+      <div class="flex items-center justify-between gap-2"><div class="text-sm font-medium truncate">${esc(label)}</div><span class="badge ${bc}">${esc(l.status)}</span></div>
+      <div class="text-[11px] text-slate-400 mt-0.5">${esc(l.updatedAt||l.createdAt||'')}</div>
+      ${nodeHtml}${err}${res}
+    </div>`;
+  }).join('');
+}
+
+function renderNodeDrawer(){
+  const drawer = $('#node-drawer'); if(!drawer) return;
+  const node = getNode(state.selectedNodeId);
+  if(!node || !state.drawerOpen){ drawer.classList.remove('open'); drawer.innerHTML=''; return; }
+  drawer.classList.add('open');
+  const credOpts = `<option value="">— None —</option>` + state.vault.map(v=>`<option value="${esc(v.serviceId)}" ${node.credentialId===v.serviceId?'selected':''}>${esc(v.label||v.serviceId)}</option>`).join('');
+  let fields='';
+  if(node.type==='trigger'){
+    fields = `
+      <label class="block mb-3"><span class="label">Trigger Type</span>
+        <select id="nd-subtype" class="input"><option value="manual" ${node.subtype==='manual'?'selected':''}>Manual Run</option><option value="webhook" ${node.subtype==='webhook'?'selected':''}>Webhook URL</option><option value="cron" ${node.subtype==='cron'?'selected':''}>Cron Schedule</option></select>
+      </label>
+      ${node.subtype==='cron'?`<label class="block mb-3"><span class="label">Cron Expression</span><input id="nd-cron" class="input" value="${esc(node.config?.cron||'0 * * * *')}" /></label>`:''}
+      ${node.subtype==='webhook'?`<div class="mb-3 text-xs text-slate-400">Webhook trigger: call POST /api/agent/run with this workflow's graph to execute.</div>`:''}`;
+  } else if(node.type==='ai'){
+    fields = `
+      <label class="block mb-3"><span class="label">Model</span>
+        <select id="nd-model" class="input">
+          <option value="@cf/meta/llama-3.3-70b-instruct-fp8-fast" ${node.config?.model==='@cf/meta/llama-3.3-70b-instruct-fp8-fast'?'selected':''}>@cf/meta/llama-3.3-70b-instruct-fp8-fast</option>
+          <option value="@cf/meta/llama-3.1-8b-instruct" ${node.config?.model==='@cf/meta/llama-3.1-8b-instruct'?'selected':''}>@cf/meta/llama-3.1-8b-instruct</option>
+          <option value="@cf/mistral/mistral-7b-instruct-v0.1" ${node.config?.model==='@cf/mistral/mistral-7b-instruct-v0.1'?'selected':''}>@cf/mistral/mistral-7b-instruct-v0.1</option>
+        </select>
+      </label>
+      <label class="block mb-3"><span class="label">System Prompt</span><textarea id="nd-system" rows="2" class="input">${esc(node.config?.system||'')}</textarea></label>
+      <label class="block mb-3"><span class="label">Prompt (supports {{ $json.output }} and {{nodeId.output}})</span><textarea id="nd-prompt" rows="6" class="input">${esc(node.config?.prompt||'')}</textarea></label>`;
+  } else {
+    fields = `
+      <label class="block mb-3"><span class="label">Action Type</span>
+        <select id="nd-subtype" class="input">
+          ${[['twitter','X/Twitter Post'],['youtube','YouTube Action'],['http','HTTP Request'],['webhook','Custom Webhook'],['telegram','Telegram'],['discord','Discord']].map(([v,l])=>`<option value="${v}" ${node.subtype===v?'selected':''}>${l}</option>`).join('')}
+        </select>
+      </label>
+      <label class="block mb-3"><span class="label">HTTP Method</span>
+        <select id="nd-method" class="input">${['POST','GET','PUT','PATCH','DELETE'].map(m=>`<option value="${m}" ${String(node.config?.method||'POST').toUpperCase()===m?'selected':''}>${m}</option>`).join('')}</select>
+      </label>
+      <label class="block mb-3"><span class="label">URL / Webhook</span><input id="nd-url" class="input" placeholder="https://..." value="${esc(node.config?.url||'')}" /></label>
+      <label class="block mb-3"><span class="label">Headers (JSON, optional)</span><textarea id="nd-headers" rows="2" class="input" placeholder='{"X-Custom":"value"}'>${esc(typeof node.config?.headers==='string'?node.config.headers:(node.config?.headers?JSON.stringify(node.config.headers,null,2):''))}</textarea></label>
+      <label class="block mb-3"><span class="label">Body / Message (supports {{ $json.output }}, {{nodeId.output}})</span><textarea id="nd-body" rows="5" class="input">${esc(typeof node.config?.body==='string'?node.config.body:(node.config?.body?JSON.stringify(node.config.body,null,2):(node.config?.message||'')))}</textarea></label>`;
+  }
+  drawer.innerHTML = `
+    <div class="h-full glass border-l border-slate-700 flex flex-col">
+      <div class="p-4 border-b border-slate-700 flex items-center justify-between">
+        <div><div class="text-sm text-slate-400">Configure Node</div><div class="font-semibold">${esc(node.name)}</div></div>
+        <button id="nd-close" class="text-slate-300 hover:text-white text-xl leading-none">&times;</button>
+      </div>
+      <div class="flex-1 overflow-auto scrollbar p-4 space-y-1">
+        <label class="block mb-3"><span class="label">Node Name</span><input id="nd-name" class="input" value="${esc(node.name||'')}" /></label>
+        ${fields}
+        <label class="block mb-3"><span class="label">Attached Vault Credential</span>
+          <select id="nd-cred" class="input">${credOpts}</select>
+        </label>
+        <div class="text-xs text-slate-500 bg-slate-900/60 border border-slate-800 rounded p-2">Use <code>{{ $json.output }}</code> for the trigger/previous context, or <code>{{nodeId.output}}</code> to reference a specific node's output.</div>
+      </div>
+      <div class="p-4 border-t border-slate-700 flex gap-2">
+        <button id="nd-save" class="btn bg-brand-600 hover:bg-brand-700 flex-1">Save Node</button>
+        <button id="nd-delete" class="btn bg-red-500/20 text-red-200 border border-red-500/30 hover:bg-red-500/30">Delete</button>
+      </div>
+    </div>`;
+  bindDrawerEvents();
+}
+
+function renderVaultModal(){
+  const modal = $('#vault-modal'); if(!modal) return;
+  if(!state.vaultModalOpen){ modal.classList.remove('open'); modal.innerHTML=''; return; }
+  modal.classList.add('open');
+  const presets = [
+    {name:'X/Twitter API', serviceId:'twitter', label:'X/Twitter', fields:[['apiKey',''],['apiSecret',''],['accessToken',''],['accessSecret',''],['bearerToken','']]},
+    {name:'OpenAI', serviceId:'openai', label:'OpenAI', fields:[['apiKey',''],['organization','']]},
+    {name:'Custom Webhook', serviceId:'custom-webhook', label:'Custom Webhook', fields:[['url','https://'],['method','POST'],['authorization','Bearer ']]},
+  ];
+  modal.innerHTML = `<div class="glass rounded-2xl w-full max-w-5xl max-h-[90vh] overflow-hidden m-4 flex flex-col">
+    <div class="p-4 border-b border-slate-700 flex items-center justify-between"><div><div class="font-semibold">Credentials Vault</div><div class="text-xs text-slate-400">Encrypted with AES-256-GCM and stored in your Firestore vault. Secrets are never listed back.</div></div><button id="vault-close" class="text-xl">&times;</button></div>
+    <div class="flex-1 overflow-auto scrollbar p-4 grid md:grid-cols-2 gap-4">
+      <div>
+        <div class="text-sm font-medium mb-2">One-click Presets</div>
+        <div class="flex flex-wrap gap-2 mb-4">${presets.map((p,i)=>`<button data-preset="${i}" class="btn bg-slate-800 hover:bg-slate-700 border border-slate-700 text-sm">${esc(p.name)}</button>`).join('')}</div>
+        <form id="vault-form" class="space-y-3">
+          <div class="grid grid-cols-2 gap-2">
+            <label class="block"><span class="label">Service ID</span><input id="v-serviceId" class="input" required /></label>
+            <label class="block"><span class="label">Label</span><input id="v-label" class="input" required /></label>
           </div>
-          <div class="space-y-2 max-h-[28rem] overflow-auto scrollbar pr-1">
-            ${items.length ? items.map(i => `
-              <div class="rounded-lg border border-slate-700 bg-slate-900/50 p-3 flex items-center justify-between gap-3">
-                <div class="min-w-0">
-                  <div class="font-medium truncate">${escapeHtml(i.label || i.serviceId)}</div>
-                  <div class="text-xs text-slate-400 truncate">ID: ${escapeHtml(i.serviceId)} · Updated ${escapeHtml(i.updatedAt || '')}</div>
-                </div>
-                <button data-del="${escapeHtml(i.serviceId)}" class="text-sm rounded-md bg-red-500/10 text-red-300 border border-red-500/30 hover:bg-red-500/20 px-3 py-1.5">Delete</button>
-              </div>`).join('') : `<div class="text-slate-400 text-sm">No credentials saved yet.</div>`}
+          <div class="flex items-center justify-between"><span class="label mb-0">Secret fields</span><button type="button" id="v-add" class="text-sm text-indigo-300 hover:text-indigo-200">+ Add field</button></div>
+          <div id="v-kv" class="space-y-2">${state.vaultKV.map((p,i)=>`<div class="grid grid-cols-12 gap-2"><input data-i="${i}" data-k="key" class="input col-span-5 text-sm" placeholder="Key" value="${esc(p.key)}" /><input data-i="${i}" data-k="value" class="input col-span-6 text-sm" placeholder="Value" value="${esc(p.value)}" /><button type="button" data-rm="${i}" class="col-span-1 rounded bg-slate-800 hover:bg-slate-700">×</button></div>`).join('')}</div>
+          ${state.error && state.vaultModalOpen?`<div class="text-sm text-red-300">${esc(state.error)}</div>`:''}
+          <button class="btn bg-brand-600 hover:bg-brand-700 w-full">Save Credential</button>
+        </form>
+      </div>
+      <div>
+        <div class="flex items-center justify-between mb-2"><div class="text-sm font-medium">Connected Services</div><button id="v-refresh" class="text-xs text-slate-300 hover:text-white">Refresh</button></div>
+        <div class="space-y-2 max-h-[60vh] overflow-auto scrollbar pr-1">
+          ${state.vault.length?state.vault.map(v=>`<div class="rounded-lg border border-slate-700 bg-slate-900/50 p-3 flex items-center justify-between gap-3"><div class="min-w-0"><div class="font-medium truncate">${esc(v.label||v.serviceId)}</div><div class="text-xs text-slate-400 truncate">ID: ${esc(v.serviceId)} · ${esc(v.updatedAt||'')}</div></div><button data-vdel="${esc(v.serviceId)}" class="text-sm rounded-md bg-red-500/10 text-red-300 border border-red-500/30 hover:bg-red-500/20 px-3 py-1.5">Delete</button></div>`).join(''):`<div class="text-slate-400 text-sm">No credentials saved.</div>`}
+        </div>
+      </div>
+    </div>
+  </div>`;
+  bindVaultModalEvents(presets);
+}
+
+function renderApp(){
+  return `
+  <div class="h-full flex flex-col">
+    <header class="glass border-b border-slate-800 px-3 md:px-4 py-2 flex items-center gap-2 flex-wrap z-20">
+      <div class="flex items-center gap-2 mr-2">
+        <span class="font-semibold">⚡ Workflow Builder</span>
+      </div>
+      <input id="wf-name" class="input !w-48 md:!w-64 !py-1.5" value="${esc(state.workflow.name)}" placeholder="Workflow name" />
+      <div class="flex items-center gap-2 ml-auto flex-wrap">
+        <div class="relative">
+          <button id="add-node-btn" class="btn bg-slate-800 hover:bg-slate-700 border border-slate-700 text-sm">+ Add Node</button>
+          <div id="add-menu" class="${state.addMenuOpen?'':'hidden'} absolute right-0 mt-2 w-56 glass rounded-lg shadow-xl p-1 z-30">
+            <div class="px-2 py-1 text-xs text-slate-400">Triggers</div>
+            <button data-add="trigger:manual" class="w-full text-left px-3 py-2 hover:bg-slate-800 rounded text-sm">⚡ Manual Run</button>
+            <button data-add="trigger:webhook" class="w-full text-left px-3 py-2 hover:bg-slate-800 rounded text-sm">⚡ Webhook</button>
+            <button data-add="trigger:cron" class="w-full text-left px-3 py-2 hover:bg-slate-800 rounded text-sm">⚡ Cron Schedule</button>
+            <div class="px-2 py-1 text-xs text-slate-400 mt-1">AI</div>
+            <button data-add="ai:workers-ai" class="w-full text-left px-3 py-2 hover:bg-slate-800 rounded text-sm">🧠 AI Agent (Workers AI)</button>
+            <div class="px-2 py-1 text-xs text-slate-400 mt-1">Actions</div>
+            <button data-add="action:twitter" class="w-full text-left px-3 py-2 hover:bg-slate-800 rounded text-sm">𝕏 X/Twitter Post</button>
+            <button data-add="action:youtube" class="w-full text-left px-3 py-2 hover:bg-slate-800 rounded text-sm">▶ YouTube Action</button>
+            <button data-add="action:http" class="w-full text-left px-3 py-2 hover:bg-slate-800 rounded text-sm">⇄ HTTP Request</button>
+            <button data-add="action:telegram" class="w-full text-left px-3 py-2 hover:bg-slate-800 rounded text-sm">✈ Telegram</button>
+            <button data-add="action:discord" class="w-full text-left px-3 py-2 hover:bg-slate-800 rounded text-sm">💬 Discord</button>
           </div>
         </div>
-      </div>`;
-    }
-
-    function statusBadge(s) {
-      const map = { running: 'bg-blue-500/15 text-blue-300 border-blue-500/30', completed: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30', failed: 'bg-red-500/15 text-red-300 border-red-500/30', scheduled: 'bg-amber-500/15 text-amber-300 border-amber-500/30' };
-      return `<span class="text-xs px-2 py-0.5 rounded border ${map[s]||'bg-slate-700 text-slate-200 border-slate-600'}">${escapeHtml(s)}</span>`;
-    }
-
-    function renderAgent() {
-      const serviceOptions = state.vault.map(v => `<label class="flex items-center gap-2 text-sm"><input type="checkbox" class="svc-check accent-indigo-500" value="${escapeHtml(v.serviceId)}" /> <span>${escapeHtml(v.label || v.serviceId)}</span></label>`).join('');
-      return `
-      <div class="grid xl:grid-cols-2 gap-4">
-        <div class="glass rounded-xl p-4 md:p-5">
-          <h2 class="text-lg font-semibold mb-1">Automation Agent</h2>
-          <p class="text-slate-400 text-sm mb-4">Run AI automations immediately or schedule a workflow using saved vault credentials.</p>
-          ${state.error ? `<div class="mb-3 rounded-lg bg-red-500/10 border border-red-500/30 text-red-200 px-3 py-2 text-sm">${escapeHtml(state.error)}</div>` : ''}
-          <form id="agent-form" class="space-y-3">
-            <textarea id="prompt" rows="5" required placeholder="Describe the automation task..." class="w-full rounded-lg bg-slate-900/70 border border-slate-700 px-3 py-2"></textarea>
-            <div>
-              <div class="text-sm text-slate-300 mb-2">Use saved credentials (optional)</div>
-              <div class="grid sm:grid-cols-2 gap-2 max-h-32 overflow-auto scrollbar">${serviceOptions || '<div class="text-slate-500 text-sm">No saved services yet.</div>'}</div>
-            </div>
-            <div class="flex flex-wrap gap-3 items-center">
-              <label class="flex items-center gap-2 text-sm text-slate-300"><input id="schedule" type="checkbox" class="accent-indigo-500" /> Schedule as workflow</label>
-            </div>
-            <div class="grid sm:grid-cols-2 gap-2">
-              <button id="run-now" type="submit" class="rounded-lg bg-brand-600 hover:bg-brand-700 px-4 py-2 font-medium">Run automation</button>
-              <button id="refresh-logs" type="button" class="rounded-lg bg-slate-700 hover:bg-slate-600 px-4 py-2 font-medium">Refresh logs</button>
-            </div>
-          </form>
+        <button id="vault-btn" class="btn bg-slate-800 hover:bg-slate-700 border border-slate-700 text-sm">🔑 Vault</button>
+        <button id="save-wf" class="btn bg-slate-700 hover:bg-slate-600 text-sm">Save Workflow</button>
+        <button id="exec-wf" class="btn bg-emerald-600 hover:bg-emerald-700 text-sm">▶ Execute Workflow</button>
+        <button id="logout" class="btn bg-slate-800 hover:bg-slate-700 border border-slate-700 text-sm">Logout</button>
+      </div>
+    </header>
+    <div class="flex-1 relative">
+      <div id="canvas-wrap" class="absolute inset-0 bottom-10">
+        <div id="canvas-world"></div>
+        <div class="absolute left-3 bottom-3 glass rounded-lg p-1 flex items-center gap-1 text-sm z-10">
+          <button id="zoom-out" class="px-2 py-1 hover:bg-slate-700 rounded">−</button>
+          <span id="zoom-label" class="px-2 text-slate-300">${Math.round(state.zoom*100)}%</span>
+          <button id="zoom-in" class="px-2 py-1 hover:bg-slate-700 rounded">+</button>
+          <button id="zoom-reset" class="px-2 py-1 hover:bg-slate-700 rounded text-xs">Reset</button>
         </div>
-        <div class="glass rounded-xl p-4 md:p-5">
-          <div class="flex items-center justify-between mb-3">
-            <h2 class="text-lg font-semibold">Execution Logs</h2>
-            <span class="text-xs text-slate-400">Recent runs</span>
-          </div>
-          <div id="logs" class="space-y-2 max-h-[32rem] overflow-auto scrollbar pr-1">
-            ${state.logs.length ? state.logs.map(l => `
-              <div class="rounded-lg border border-slate-700 bg-slate-900/50 p-3">
-                <div class="flex items-center justify-between gap-2 mb-1">
-                  ${statusBadge(l.status)}
-                  <span class="text-xs text-slate-400">${escapeHtml(l.updatedAt || l.createdAt || '')}</span>
-                </div>
-                <div class="text-sm font-medium mb-1">${escapeHtml(l.prompt)}</div>
-                ${l.error ? `<pre class="text-xs text-red-200 whitespace-pre-wrap break-words bg-red-500/10 border border-red-500/20 rounded p-2 mt-2">${escapeHtml(l.error)}</pre>` : ''}
-                ${l.result ? `<pre class="text-xs text-slate-200 whitespace-pre-wrap break-words bg-slate-950/60 border border-slate-800 rounded p-2 mt-2">${escapeHtml(l.result).slice(0, 4000)}</pre>` : ''}
-              </div>`).join('') : `<div class="text-slate-400 text-sm">No runs yet.</div>`}
-          </div>
-        </div>
-      </div>`;
-    }
+        <div class="absolute right-3 bottom-3 text-xs text-slate-400 glass rounded px-2 py-1 z-10">Pan: drag background · Zoom: pinch/scroll · Connect: drag from right port</div>
+      </div>
+      <div id="exec-drawer" class="exec-drawer glass border-t border-slate-700 ${state.execOpen?'open':''}">
+        <button id="exec-toggle" class="w-full h-10 flex items-center justify-between px-4 text-sm border-b border-slate-800 bg-slate-900/50">
+          <span>Executions Log</span><span>${state.execOpen?'▼':'▲'}</span>
+        </button>
+        <div id="logs-list" class="h-[220px] overflow-auto scrollbar p-2 space-y-2"></div>
+      </div>
+    </div>
+  </div>
+  <div id="node-drawer" class="drawer ${state.drawerOpen?'open':''}"></div>
+  <div id="vault-modal" class="modal-bg items-center justify-center ${state.vaultModalOpen?'open':''}"></div>`;
+}
 
-    function renderApp() {
-      const userLabel = state.user?.email || state.user?.uid || 'User';
-      return `
-      <div class="max-w-7xl mx-auto p-4 md:p-6">
-        <header class="glass rounded-2xl p-4 md:p-5 mb-4 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-          <div>
-            <h1 class="text-xl md:text-2xl font-semibold">Cloudflare Automation Platform</h1>
-            <p class="text-slate-400 text-sm">Signed in as ${escapeHtml(userLabel)}</p>
-          </div>
-          <div class="flex items-center gap-2">
-            <button id="tab-vault" class="px-4 py-2 rounded-lg border ${state.tab==='vault'?'bg-brand-600 border-indigo-500':'bg-slate-800/60 border-slate-700 hover:bg-slate-800'}">Vault</button>
-            <button id="tab-agent" class="px-4 py-2 rounded-lg border ${state.tab==='agent'?'bg-brand-600 border-indigo-500':'bg-slate-800/60 border-slate-700 hover:bg-slate-800'}">Automation Agent</button>
-            <button id="logout" class="px-4 py-2 rounded-lg bg-slate-700 hover:bg-slate-600">Logout</button>
-          </div>
-        </header>
-        <main>${state.tab === 'vault' ? renderVault() : renderAgent()}</main>
-      </div>`;
-    }
+function render(){
+  const root = $('#app'); if(!root) return;
+  if(!state.user){ root.innerHTML = renderAuth(); bindAuth(); return; }
+  // full render only when safe (not typing) to avoid wiping inputs; but we always keep DOM structure stable by targeting containers.
+  const active = document.activeElement;
+  const typing = active && (active.tagName==='INPUT'||active.tagName==='TEXTAREA'||active.tagName==='SELECT');
+  if (!root.dataset.mounted) {
+    root.innerHTML = renderApp();
+    root.dataset.mounted = '1';
+  }
+  // update dynamic bits
+  const nameInput = $('#wf-name'); if (nameInput && document.activeElement !== nameInput) nameInput.value = state.workflow.name;
+  const zoomLbl = $('#zoom-label'); if (zoomLbl) zoomLbl.textContent = Math.round(state.zoom*100)+'%';
+  const addMenu = $('#add-menu'); if (addMenu) addMenu.classList.toggle('hidden', !state.addMenuOpen);
+  const exec = $('#exec-drawer'); if (exec) exec.classList.toggle('open', !!state.execOpen);
+  renderCanvas();
+  renderNodeDrawer();
+  renderVaultModal();
+  renderLogsOnly();
+  bindAppEvents();
+}
 
-    function render() {
-      const root = $('#app');
-      if (!state.user) { root.innerHTML = renderAuth(); bindAuth(); return; }
-      root.innerHTML = renderApp();
-      bindApp();
-    }
+function bindAuth(){
+  $('#auth-form')?.addEventListener('submit', async (e)=>{
+    e.preventDefault(); state.error='';
+    try{ await signInWithEmailAndPassword(auth, $('#email').value.trim(), $('#password').value); }
+    catch(err){ state.error=err.message||'Sign in failed'; render(); }
+  });
+  $('#signup-btn')?.addEventListener('click', async ()=>{
+    state.error=''; const email=$('#email').value.trim(), pw=$('#password').value;
+    if(!email||!pw){ state.error='Enter email and password to sign up.'; render(); return; }
+    try{ await createUserWithEmailAndPassword(auth,email,pw); }catch(err){ state.error=err.message||'Sign up failed'; render(); }
+  });
+  $('#google-btn')?.addEventListener('click', async ()=>{ state.error=''; try{ await signInWithPopup(auth, googleProvider);}catch(err){ state.error=err.message||'Google sign-in failed'; render(); } });
+}
 
-    function bindAuth() {
-      $('#auth-form')?.addEventListener('submit', async (e) => {
-        e.preventDefault(); state.error = '';
-        const email = $('#email').value.trim(); const password = $('#password').value;
-        try { await signInWithEmailAndPassword(auth, email, password); }
-        catch (err) { setError(err.message || 'Sign in failed'); }
-      });
-      $('#signup-btn')?.addEventListener('click', async () => {
-        state.error = '';
-        const email = $('#email').value.trim(); const password = $('#password').value;
-        if (!email || !password) return setError('Enter email and password to sign up.');
-        try { await createUserWithEmailAndPassword(auth, email, password); }
-        catch (err) { setError(err.message || 'Sign up failed'); }
-      });
-      $('#google-btn')?.addEventListener('click', async () => {
-        state.error = '';
-        try { await signInWithPopup(auth, googleProvider); }
-        catch (err) { setError(err.message || 'Google sign-in failed'); }
-      });
-    }
+let appEventsBound = false;
+function bindAppEvents(){
+  if (appEventsBound) return; appEventsBound = true;
+  document.addEventListener('click', (e)=>{
+    const t = e.target;
+    if (!(t instanceof Element)) return;
+    if (t.id==='logout') signOut(auth);
+    if (t.id==='add-node-btn') { state.addMenuOpen=!state.addMenuOpen; const m=$('#add-menu'); if(m) m.classList.toggle('hidden', !state.addMenuOpen); }
+    if (t.closest('[data-add]')) { const v=t.closest('[data-add]').getAttribute('data-add').split(':'); addNode(v[0], v[1]); }
+    if (t.id==='vault-btn') { state.vaultModalOpen=true; state.error=''; renderVaultModal(); refreshVault().then(()=>renderVaultModal()); }
+    if (t.id==='save-wf') saveWorkflow();
+    if (t.id==='exec-wf') executeWorkflow();
+    if (t.id==='exec-toggle') { state.execOpen=!state.execOpen; $('#exec-drawer')?.classList.toggle('open', state.execOpen); $('#exec-toggle span:last-child').textContent = state.execOpen?'▼':'▲'; }
+    if (t.id==='zoom-in') { state.zoom=Math.min(2, state.zoom+0.1); renderCanvas(); $('#zoom-label').textContent=Math.round(state.zoom*100)+'%'; }
+    if (t.id==='zoom-out') { state.zoom=Math.max(0.3, state.zoom-0.1); renderCanvas(); $('#zoom-label').textContent=Math.round(state.zoom*100)+'%'; }
+    if (t.id==='zoom-reset') { state.zoom=1; state.pan={x:40,y:40}; renderCanvas(); $('#zoom-label').textContent='100%'; }
+    if (state.addMenuOpen && !t.closest('#add-node-btn') && !t.closest('#add-menu')) { state.addMenuOpen=false; $('#add-menu')?.classList.add('hidden'); }
+  });
+  document.addEventListener('input', (e)=>{
+    const t=e.target; if(!(t instanceof Element)) return;
+    if(t.id==='wf-name') state.workflow.name = t.value;
+  });
+}
 
-    function bindApp() {
-      $('#logout')?.addEventListener('click', () => signOut(auth));
-      $('#tab-vault')?.addEventListener('click', async () => { state.tab='vault'; state.error=''; await refreshVault(); render(); });
-      $('#tab-agent')?.addEventListener('click', async () => { state.tab='agent'; state.error=''; await Promise.all([refreshVault(), refreshLogs()]); render(); });
+function bindCanvasEvents(){
+  const wrap = $('#canvas-wrap'); const world = $('#canvas-world');
+  if(!wrap || !world) return;
 
-      if (state.tab === 'vault') {
-        $('#add-kv')?.addEventListener('click', () => { state.kvPairs.push({key:'', value:''}); render(); });
-        document.querySelectorAll('[data-remove-kv]').forEach(btn => btn.addEventListener('click', () => {
-          const i = Number(btn.getAttribute('data-remove-kv'));
-          state.kvPairs.splice(i,1); if (!state.kvPairs.length) state.kvPairs.push({key:'',value:''}); render();
-        }));
-        document.querySelectorAll('#kv-container input').forEach(inp => inp.addEventListener('input', (e) => {
-          const i = Number(e.target.getAttribute('data-i')); const k = e.target.getAttribute('data-k');
-          state.kvPairs[i][k] = e.target.value;
-        }));
-        $('#vault-form')?.addEventListener('submit', async (e) => {
-          e.preventDefault(); state.error='';
-          const serviceId = $('#serviceId').value.trim();
-          const label = $('#label').value.trim();
-          const secretData = {};
-          for (const p of state.kvPairs) { if (p.key.trim()) secretData[p.key.trim()] = p.value; }
-          if (!Object.keys(secretData).length) return setError('Add at least one secret field.');
-          try {
-            await api('/api/vault', { method: 'POST', body: JSON.stringify({ serviceId, label, secretData }) });
-            $('#serviceId').value=''; $('#label').value=''; state.kvPairs=[{key:'',value:''}];
-            await refreshVault(); render();
-          } catch (err) { setError(err.message); }
-        });
-        document.querySelectorAll('[data-del]').forEach(btn => btn.addEventListener('click', async () => {
-          const serviceId = btn.getAttribute('data-del');
-          if (!confirm(`Delete credential "${serviceId}"?`)) return;
-          try { await api(`/api/vault/${encodeURIComponent(serviceId)}`, { method: 'DELETE' }); await refreshVault(); render(); }
-          catch (err) { setError(err.message); }
-        }));
-        $('#refresh-vault')?.addEventListener('click', async () => { await refreshVault(); render(); });
+  // node clicks / drags / port connect
+  $$('#canvas-world .node').forEach(nodeEl=>{
+    const id = nodeEl.getAttribute('data-node-id');
+    nodeEl.addEventListener('pointerdown', (e)=>{
+      if (e.target.closest('[data-port-out]')) return; // handled separately
+      const handle = e.target.closest('[data-drag-handle]');
+      if (handle) {
+        e.stopPropagation();
+        state.dragNode = { id, startX: e.clientX, startY: e.clientY, orig: {...getNode(id).position} };
+        nodeEl.setPointerCapture(e.pointerId);
       }
-
-      if (state.tab === 'agent') {
-        $('#agent-form')?.addEventListener('submit', async (e) => {
-          e.preventDefault(); state.error='';
-          const prompt = $('#prompt').value.trim();
-          const schedule = $('#schedule').checked;
-          const services = Array.from(document.querySelectorAll('.svc-check:checked')).map(c => c.value);
-          try {
-            await api('/api/agent/run', { method: 'POST', body: JSON.stringify({ prompt, services, schedule, mode: schedule ? 'workflow' : 'immediate' }) });
-            $('#prompt').value='';
-            await refreshLogs(); render();
-          } catch (err) { setError(err.message); }
-        });
-        $('#refresh-logs')?.addEventListener('click', async () => { await refreshLogs(); render(); });
-      }
-    }
-
-    let pollTimer = null;
-    function startPolling() {
-      if (pollTimer) clearInterval(pollTimer);
-      pollTimer = setInterval(async () => {
-        if (!state.user) return;
-        if (state.tab === 'agent') { await refreshLogs(); render(); }
-      }, 5000);
-    }
-
-    onAuthStateChanged(auth, async (user) => {
-      state.user = user || null;
-      state.error = '';
-      if (user) {
-        state.token = await user.getIdToken();
-        await Promise.all([refreshVault(), refreshLogs()]);
-        startPolling();
-      } else {
-        state.token = null; state.vault = []; state.logs = [];
-        if (pollTimer) clearInterval(pollTimer);
-      }
-      render();
     });
+    nodeEl.addEventListener('pointermove', (e)=>{
+      if (state.dragNode && state.dragNode.id===id) {
+        const dx = (e.clientX - state.dragNode.startX)/state.zoom;
+        const dy = (e.clientY - state.dragNode.startY)/state.zoom;
+        const n = getNode(id); n.position = { x: state.dragNode.orig.x + dx, y: state.dragNode.orig.y + dy };
+        renderCanvas();
+      }
+    });
+    nodeEl.addEventListener('pointerup', (e)=>{ if(state.dragNode && state.dragNode.id===id){ state.dragNode=null; } });
+    nodeEl.addEventListener('click', (e)=>{
+      if (e.target.closest('[data-port-out]')) return;
+      if (state.dragNode) return;
+      state.selectedNodeId = id; state.drawerOpen = true; renderNodeDrawer();
+    });
+  });
 
-    render();
-  </script>
+  $$('#canvas-world [data-port-out]').forEach(port=>{
+    port.addEventListener('pointerdown', (e)=>{ e.stopPropagation(); state.connectingFrom = port.getAttribute('data-port-out'); });
+  });
+  wrap.addEventListener('pointerup', (e)=>{
+    if (state.connectingFrom) {
+      const targetNode = e.target.closest?.('.node');
+      if (targetNode) {
+        const tid = targetNode.getAttribute('data-node-id');
+        if (tid && tid !== state.connectingFrom) connectNodes(state.connectingFrom, tid);
+      }
+      state.connectingFrom = null; renderCanvas();
+    }
+    state.isPointerDown=false; state.panStart=null;
+  });
+
+  // pan background
+  wrap.onpointerdown = (e)=>{
+    if (e.target.closest('.node') || e.target.closest('button')) return;
+    state.isPointerDown=true; state.panStart={x:e.clientX,y:e.clientY,pan:{...state.pan}};
+    wrap.setPointerCapture?.(e.pointerId);
+  };
+  wrap.onpointermove = (e)=>{
+    if(state.isPointerDown && state.panStart && !state.dragNode && !state.connectingFrom){
+      state.pan.x = state.panStart.pan.x + (e.clientX-state.panStart.x);
+      state.pan.y = state.panStart.pan.y + (e.clientY-state.panStart.y);
+      const world=$('#canvas-world'); if(world) world.style.transform=`translate(${state.pan.x}px, ${state.pan.y}px) scale(${state.zoom})`;
+    }
+  };
+  wrap.onwheel = (e)=>{
+    e.preventDefault();
+    const delta = -e.deltaY * 0.001;
+    const newZoom = Math.min(2, Math.max(0.3, state.zoom + delta));
+    const rect = wrap.getBoundingClientRect();
+    const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+    const wx = (mx - state.pan.x)/state.zoom, wy = (my - state.pan.y)/state.zoom;
+    state.zoom = newZoom;
+    state.pan.x = mx - wx*state.zoom; state.pan.y = my - wy*state.zoom;
+    renderCanvas(); const zl=$('#zoom-label'); if(zl) zl.textContent=Math.round(state.zoom*100)+'%';
+  }, {passive:false};
+
+  // basic touch pinch
+  let pinch=null;
+  wrap.addEventListener('touchstart',(e)=>{
+    if(e.touches.length===2){
+      const dx=e.touches[0].clientX-e.touches[1].clientX, dy=e.touches[0].clientY-e.touches[1].clientY;
+      pinch={dist:Math.hypot(dx,dy), zoom:state.zoom};
+    }
+  }, {passive:true});
+  wrap.addEventListener('touchmove',(e)=>{
+    if(e.touches.length===2 && pinch){
+      const dx=e.touches[0].clientX-e.touches[1].clientX, dy=e.touches[0].clientY-e.touches[1].clientY;
+      const dist=Math.hypot(dx,dy);
+      state.zoom = Math.min(2, Math.max(0.3, pinch.zoom * (dist/pinch.dist)));
+      renderCanvas(); const zl=$('#zoom-label'); if(zl) zl.textContent=Math.round(state.zoom*100)+'%';
+    }
+  }, {passive:true});
+  wrap.addEventListener('touchend',()=>{ if(pinch) pinch=null; }, {passive:true});
+}
+
+function bindDrawerEvents(){
+  $('#nd-close')?.addEventListener('click', ()=>{ state.drawerOpen=false; renderNodeDrawer(); });
+  $('#nd-delete')?.addEventListener('click', ()=>{ if(state.selectedNodeId) deleteNode(state.selectedNodeId); });
+  $('#nd-save')?.addEventListener('click', ()=>{
+    const n=getNode(state.selectedNodeId); if(!n) return;
+    n.name = $('#nd-name').value;
+    n.credentialId = $('#nd-cred').value;
+    const subtypeEl = $('#nd-subtype'); if(subtypeEl) n.subtype = subtypeEl.value;
+    if(n.type==='trigger'){
+      if(n.subtype==='cron') n.config.cron = $('#nd-cron')?.value || '0 * * * *';
+      state.workflow.triggerType = n.subtype||'manual';
+    } else if(n.type==='ai'){
+      n.config.model = $('#nd-model')?.value;
+      n.config.system = $('#nd-system')?.value;
+      n.config.prompt = $('#nd-prompt')?.value;
+    } else {
+      n.config.method = $('#nd-method')?.value || 'POST';
+      n.config.url = $('#nd-url')?.value || '';
+      const h = $('#nd-headers')?.value?.trim(); if(h){ try{ n.config.headers = JSON.parse(h);}catch{ n.config.headers = h; } } else { delete n.config.headers; }
+      const b = $('#nd-body')?.value ?? '';
+      try{ n.config.body = JSON.parse(b); }catch{ n.config.body = b; }
+    }
+    state.drawerOpen=false; renderCanvas(); renderNodeDrawer();
+  });
+}
+
+function bindVaultModalEvents(presets){
+  $('#vault-close')?.addEventListener('click', ()=>{ state.vaultModalOpen=false; renderVaultModal(); });
+  $('#vault-modal')?.addEventListener('click',(e)=>{ if(e.target.id==='vault-modal'){ state.vaultModalOpen=false; renderVaultModal(); } });
+  $$('#vault-modal [data-preset]').forEach(btn=>btn.addEventListener('click',()=>{
+    const p = presets[Number(btn.getAttribute('data-preset'))];
+    $('#v-serviceId').value=p.serviceId; $('#v-label').value=p.label;
+    state.vaultKV = p.fields.map(([k,v])=>({key:k,value:v}));
+    renderVaultModal();
+  }));
+  $('#v-add')?.addEventListener('click', ()=>{ state.vaultKV.push({key:'',value:''}); renderVaultModal(); });
+  $$('#v-kv [data-rm]').forEach(b=>b.addEventListener('click',()=>{ state.vaultKV.splice(Number(b.getAttribute('data-rm')),1); if(!state.vaultKV.length) state.vaultKV.push({key:'',value:''}); renderVaultModal(); }));
+  $$('#v-kv input').forEach(inp=>inp.addEventListener('input',(e)=>{ const i=Number(e.target.getAttribute('data-i')); const k=e.target.getAttribute('data-k'); state.vaultKV[i][k]=e.target.value; }));
+  $('#vault-form')?.addEventListener('submit', async (e)=>{
+    e.preventDefault(); state.error='';
+    const serviceId=$('#v-serviceId').value.trim(), label=$('#v-label').value.trim();
+    const secretData={}; for(const p of state.vaultKV){ if(p.key.trim()) secretData[p.key.trim()]=p.value; }
+    if(!Object.keys(secretData).length){ state.error='Add at least one secret field.'; renderVaultModal(); return; }
+    try{
+      await api('/api/vault', {method:'POST', body: JSON.stringify({serviceId,label,secretData})});
+      state.vaultKV=[{key:'',value:''}]; state.error='';
+      await refreshVault(); renderVaultModal();
+    }catch(err){ state.error=err.message; renderVaultModal(); }
+  });
+  $$('#vault-modal [data-vdel]').forEach(btn=>btn.addEventListener('click', async ()=>{
+    const serviceId = btn.getAttribute('data-vdel');
+    if(!confirm(`Delete credential "${serviceId}"?`)) return;
+    try{ await api(`/api/vault/${encodeURIComponent(serviceId)}`, {method:'DELETE'}); await refreshVault(); renderVaultModal(); }
+    catch(err){ state.error=err.message; renderVaultModal(); }
+  }));
+  $('#v-refresh')?.addEventListener('click', async ()=>{ await refreshVault(); renderVaultModal(); });
+}
+
+async function saveWorkflow(){
+  try{
+    state.workflow.name = $('#wf-name')?.value || state.workflow.name || 'My Workflow';
+    const body = { id: state.workflow.id || undefined, name: state.workflow.name, data: { nodes: state.workflow.nodes, edges: state.workflow.edges, triggerType: state.workflow.triggerType } };
+    const res = await api('/api/agent/workflows', { method:'POST', body: JSON.stringify(body) });
+    if(res && res.id) state.workflow.id = res.id;
+    await refreshWorkflows();
+    alert('Workflow saved');
+  }catch(e){ alert('Save failed: '+e.message); }
+}
+
+async function executeWorkflow(){
+  try{
+    state.runStatus = {}; renderCanvas();
+    state.workflow.name = $('#wf-name')?.value || state.workflow.name;
+    if(!state.workflow.nodes.length) { alert('Add at least one node.'); return; }
+    const payload = {
+      workflowId: state.workflow.id,
+      workflowName: state.workflow.name,
+      nodes: state.workflow.nodes,
+      edges: state.workflow.edges,
+      triggerType: state.workflow.triggerType || 'manual',
+      schedule: state.workflow.nodes.find(n=>n.type==='trigger' && n.subtype==='cron')?.config?.cron
+    };
+    await api('/api/agent/run', { method:'POST', body: JSON.stringify(payload) });
+    state.execOpen = true; $('#exec-drawer')?.classList.add('open');
+    await refreshLogs();
+  }catch(e){ alert('Execution failed: '+e.message); }
+}
+
+// polling - never during editing/focus and only updates logs container
+let pollTimer=null;
+function startPolling(){
+  if(pollTimer) clearInterval(pollTimer);
+  pollTimer = setInterval(async ()=>{
+    if(!state.user) return;
+    if(isEditing()) return; // pause when modal/drawer/input focused
+    await refreshLogs();
+  }, 3000);
+}
+
+onAuthStateChanged(auth, async (user)=>{
+  state.user = user || null; state.error='';
+  if(user){
+    state.token = await user.getIdToken();
+    await Promise.all([refreshVault(), refreshLogs(), refreshWorkflows()]);
+    // seed a starter workflow if empty
+    if(!state.workflow.nodes.length){
+      const t=defaultNode('trigger','manual'); t.position={x:80,y:140};
+      const a=defaultNode('ai','workers-ai'); a.position={x:380,y:120}; a.config.prompt='Write a short update based on: {{ $json.output }}';
+      const act=defaultNode('action','http'); act.position={x:680,y:140}; act.config={url:'',method:'POST',body:'{"text":"{{ai.output}}"}'.replace('ai',a.id)};
+      state.workflow.nodes=[t,a,act];
+      state.workflow.edges=[{id:uid(),source:t.id,target:a.id},{id:uid(),source:a.id,target:act.id}];
+    }
+    startPolling();
+  } else {
+    state.token=null; state.vault=[]; state.logs=[]; state.workflows=[]; const root=$('#app'); if(root) root.dataset.mounted='';
+    if(pollTimer) clearInterval(pollTimer);
+  }
+  // full mount render
+  const root=$('#app'); if(root){ root.dataset.mounted=''; root.innerHTML=''; }
+  render();
+});
+
+// initial
+render();
+</script>
 </body>
 </html>

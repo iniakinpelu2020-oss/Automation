@@ -1,6 +1,5 @@
-import type { AgentRunRequest, Env, LogEntry, WorkflowParams } from "../types";
+import type { AgentRunRequest, Env, LogEntry, WorkflowGraph, WorkflowParams } from "../types";
 import { requireAuth } from "../vault/auth";
-import { getVaultCredential } from "../vault";
 
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {
@@ -11,6 +10,10 @@ function json(data: unknown, status = 200): Response {
 
 function getStub(env: Env, uid: string) {
   return env.AGENT_STATE.get(env.AGENT_STATE.idFromName(uid));
+}
+
+function isGraphRequest(body: AgentRunRequest): boolean {
+  return Array.isArray(body.nodes) && body.nodes.length > 0;
 }
 
 export async function handleAgentRequest(request: Request, env: Env, url: URL): Promise<Response> {
@@ -24,19 +27,76 @@ export async function handleAgentRequest(request: Request, env: Env, url: URL): 
   try {
     if (request.method === "GET" && url.pathname === "/api/agent/logs") {
       const stub = getStub(env, auth.uid);
-      const res = await stub.fetch("https://do/logs");
+      const res = await stub.fetch("https://do/logs" + url.search);
       const data = await res.json();
       return json(data);
     }
 
+    // Workflow persistence
+    if (request.method === "GET" && url.pathname === "/api/agent/workflows") {
+      const stub = getStub(env, auth.uid);
+      const res = await stub.fetch("https://do/workflows");
+      return new Response(res.body, { status: res.status, headers: { "Content-Type": "application/json" } });
+    }
+    if (request.method === "POST" && url.pathname === "/api/agent/workflows") {
+      const body = await request.json() as { id?: string; name?: string; data?: WorkflowGraph };
+      if (!body.name || !body.data) return json({ error: "name and data required" }, 400);
+      const stub = getStub(env, auth.uid);
+      const res = await stub.fetch("https://do/workflows/save", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: body.id, name: body.name, data: body.data }),
+      });
+      return new Response(res.body, { status: res.status, headers: { "Content-Type": "application/json" } });
+    }
+
     if (request.method === "POST" && url.pathname === "/api/agent/run") {
       const body = (await request.json()) as AgentRunRequest;
-      const prompt = (body.prompt || "").trim();
-      if (!prompt) return json({ error: "prompt is required" }, 400);
-      const services = Array.isArray(body.services) ? body.services.filter(Boolean) : [];
       const logId = crypto.randomUUID();
       const now = new Date().toISOString();
       const stub = getStub(env, auth.uid);
+
+      // Graph-based workflow execution
+      if (isGraphRequest(body)) {
+        const workflow: WorkflowGraph = {
+          id: body.workflowId,
+          name: body.workflowName || "Untitled Workflow",
+          nodes: body.nodes || [],
+          edges: body.edges || [],
+          triggerType: body.triggerType,
+          schedule: body.schedule ? String(body.schedule) : undefined,
+        };
+        const baseEntry: LogEntry = {
+          id: logId,
+          uid: auth.uid,
+          prompt: workflow.name || "Workflow run",
+          workflowId: workflow.id,
+          workflowName: workflow.name,
+          status: (workflow.triggerType === "cron" || body.mode === "workflow") ? "scheduled" : "running",
+          nodeLogs: JSON.stringify([]),
+          createdAt: now,
+          updatedAt: now,
+        };
+        await stub.fetch("https://do/log", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(baseEntry),
+        });
+
+        const params: WorkflowParams = {
+          uid: auth.uid,
+          token: auth.token,
+          logId,
+          workflow,
+        };
+        await env.AUTOMATION_WORKFLOW.create({ params });
+        return json({ ok: true, logId, status: baseEntry.status });
+      }
+
+      // Legacy/simple prompt mode (backward compatible)
+      const prompt = (body.prompt || "").trim();
+      if (!prompt) return json({ error: "prompt is required" }, 400);
+      const services = Array.isArray(body.services) ? body.services.filter(Boolean) : [];
 
       const baseEntry: LogEntry = {
         id: logId,
@@ -54,18 +114,27 @@ export async function handleAgentRequest(request: Request, env: Env, url: URL): 
 
       const useWorkflow = body.schedule || body.mode === "workflow" || services.length > 0;
       if (useWorkflow) {
+        // convert legacy request to a simple graph
+        const nodes = [
+          { id: "trigger-1", type: "trigger" as const, subtype: "manual", name: "Manual Trigger", config: {} },
+          { id: "ai-1", type: "ai" as const, subtype: "workers-ai", name: "AI Agent", config: { prompt } },
+        ];
+        if (services.length) {
+          nodes.push({ id: "action-1", type: "action" as const, subtype: "http", name: "Actions", config: { services } } as any);
+        }
+        const edges = services.length
+          ? [{ id: "e1", source: "trigger-1", target: "ai-1" }, { id: "e2", source: "ai-1", target: "action-1" }]
+          : [{ id: "e1", source: "trigger-1", target: "ai-1" }];
         const params: WorkflowParams = {
           uid: auth.uid,
           token: auth.token,
-          prompt,
-          services,
           logId,
+          workflow: { name: prompt.slice(0, 60), nodes, edges, triggerType: body.schedule ? "cron" : "manual" },
         };
         await env.AUTOMATION_WORKFLOW.create({ params });
         return json({ ok: true, logId, status: "scheduled" });
       }
 
-      // Immediate AI-only run
       try {
         const aiRes = await env["Worker AI"].run("@cf/meta/llama-3.3-70b-instruct-fp8-fast", {
           messages: [
