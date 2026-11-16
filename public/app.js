@@ -94,7 +94,27 @@ function deleteNode(id){ state.workflow.nodes=state.workflow.nodes.filter(n=>n.i
 function connectNodes(s,t){ if(s===t) return; if(state.workflow.edges.some(e=>e.source===s&&e.target===t)) return; state.workflow.edges.push({id:uid(),source:s,target:t}); }
 function getNode(id){ return state.workflow.nodes.find(n=>n.id===id); }
 function nodeStatus(id){ return state.runStatus[id]||'idle'; }
-function applyWorkflowGraph(graph){ if(!graph) return; if(Array.isArray(graph.nodes)&&graph.nodes.length){ state.workflow.nodes=graph.nodes.map(n=>({id:n.id||uid(),type:n.type||'action',subtype:n.subtype||'',name:n.name||n.subtype||n.type,position:n.position||{x:80,y:120},config:n.config||{},credentialId:n.credentialId||''})); state.workflow.edges=Array.isArray(graph.edges)?graph.edges.map(e=>({id:e.id||uid(),source:e.source,target:e.target})):[]; state.workflow.groups=Array.isArray(graph.groups)?graph.groups:[]; } renderCanvas(); }
+function applyWorkflowGraph(graph){
+  if(!graph || typeof graph !== 'object') return;
+  const nodes = Array.isArray(graph.nodes) ? graph.nodes : [];
+  const edges = Array.isArray(graph.edges) ? graph.edges : [];
+  const groups = Array.isArray(graph.groups) ? graph.groups : [];
+  if(nodes.length){
+    state.workflow.nodes = nodes.map((n,i)=>({
+      id: n.id || uid(),
+      type: n.type || 'action',
+      subtype: n.subtype || '',
+      name: n.name || n.subtype || n.type || ('Node '+(i+1)),
+      position: (n.position && typeof n.position.x==='number' && typeof n.position.y==='number') ? n.position : { x: 80 + (i%4)*260, y: 120 + Math.floor(i/4)*160 },
+      config: (n.config && typeof n.config==='object') ? n.config : {},
+      credentialId: n.credentialId || ''
+    }));
+  }
+  // update edges/groups when provided (or when nodes changed)
+  if(nodes.length || Array.isArray(graph.edges)) state.workflow.edges = edges.map((e,i)=>({ id: e.id || ('e'+(i+1)), source: e.source, target: e.target })).filter(e=>e.source && e.target);
+  if(nodes.length || Array.isArray(graph.groups)) state.workflow.groups = groups;
+  renderCanvas();
+}
 
 function connectedServices(){ return new Set((state.vault||[]).map(v=>v.serviceId)); }
 function isCredConnected(req){ const set=connectedServices(); const r=(req||'').toLowerCase(); const aliases={youtube:['google_youtube','youtube'],gmail:['google_gmail','gmail'],drive:['google_drive','drive'],sheets:['google_sheets','sheets'],twitter:['twitter','x'],openai:['openai'],webhook:['webhook','custom-webhook'],gemini:['gemini','google_ai'],groq:['groq'],openrouter:['openrouter'],github:['github']}; const keys=aliases[r]||[r,`google_${r}`]; return keys.some(k=>set.has(k)); }
@@ -139,7 +159,33 @@ function renderSidebar(){
     </div>`;
 }
 
-function renderCodeBlocks(blocks){ if(!Array.isArray(blocks)||!blocks.length) return ''; return blocks.map((b,i)=>`<div class="code-card mt-2"><div class="flex items-center justify-between px-3 py-2 border-b" style="border-color:#2f2f35"><span class="text-xs" style="color:var(--muted)">${esc(b.title||b.language||'code')}</span><button data-insert-code="${i}" class="btn !py-1 !px-2 text-xs">Insert into Workflow</button></div><pre class="p-3 text-xs overflow-auto scrollbar" style="color:#d4d4d8;white-space:pre-wrap">${esc(b.code||'')}</pre></div>`).join(''); }
+function renderCodeBlocks(blocks, msgIdx){
+  if(!Array.isArray(blocks)||!blocks.length) return '';
+  return blocks.map((b,i)=>{
+    const encoded = encodeURIComponent(b.code || '');
+    return `<div class="code-card mt-2"><div class="flex items-center justify-between gap-2 px-3 py-2 border-b" style="border-color:#2f2f35"><span class="text-xs truncate" style="color:var(--muted)">${esc(b.title||b.language||'code')}</span><div class="flex items-center gap-1"><button data-copy-code="${encoded}" class="btn !py-1 !px-2 text-xs">Copy</button><button data-insert-code="${msgIdx}" data-code-idx="${i}" class="btn !py-1 !px-2 text-xs">Insert</button></div></div><pre class="p-3 text-xs overflow-auto scrollbar" style="color:#d4d4d8;white-space:pre-wrap;font-family:ui-monospace,SFMono-Regular,Menlo,monospace">${esc(b.code||'')}</pre></div>`;
+  }).join('');
+}
+
+function extractAssistantDisplay(m){
+  const data = m.data || null;
+  let explanation = m.content || '';
+  let blocks = (data && Array.isArray(data.codeBlocks)) ? data.codeBlocks : [];
+  // If content looks like raw JSON from a structured response, parse and extract explanation/codeBlocks
+  if(!explanation && data && data.explanation) explanation = data.explanation;
+  const looksJson = typeof explanation === 'string' && explanation.trim().startsWith('{') && explanation.includes('"explanation"');
+  if(looksJson){
+    try {
+      const cleaned = explanation.replace(/^```(?:json)?/i,'').replace(/```$/i,'').trim();
+      const mobj = JSON.parse(cleaned);
+      if(mobj && typeof mobj === 'object'){
+        if(typeof mobj.explanation === 'string') explanation = mobj.explanation;
+        if(!blocks.length && Array.isArray(mobj.codeBlocks)) blocks = mobj.codeBlocks;
+      }
+    } catch {}
+  }
+  return { explanation: explanation || '', blocks };
+}
 
 function renderChatMessages(){
   const c=$('#chat-messages'); if(!c) return;
@@ -149,20 +195,22 @@ function renderChatMessages(){
       <div class="flex flex-wrap gap-2 justify-center mt-4 max-w-3xl">${['Schedule social posts','Daily YouTube uploader','AI webhook responder','Telegram / Discord bot'].map(t=>`<button class="pill" data-pill="${esc(t)}">${esc(t)}</button>`).join('')}</div></div>`;
     return;
   }
-  c.innerHTML = state.chatMessages.map((m)=>{
+  c.innerHTML = state.chatMessages.map((m, idx)=>{
     if(m.role==='user') return `<div class="chat-msg user"><div class="text-sm whitespace-pre-wrap">${esc(m.content||'')}</div></div>`;
-    const blocks = m.data && m.data.codeBlocks ? renderCodeBlocks(m.data.codeBlocks) : '';
+    const { explanation, blocks } = extractAssistantDisplay(m);
     const meta = m.aiMeta || m.data?.aiMeta;
-    return `<div class="chat-msg"><div class="flex items-center justify-between gap-2 mb-1"><div></div>${providerBadge(meta)}</div><div class="text-sm whitespace-pre-wrap">${esc(m.content||m.data?.explanation||'')}</div>${blocks}</div>`;
+    return `<div class="chat-msg"><div class="flex items-center justify-between gap-2 mb-1"><div></div>${providerBadge(meta)}</div><div class="text-sm whitespace-pre-wrap" style="line-height:1.55">${esc(explanation)}</div>${renderCodeBlocks(blocks, idx)}</div>`;
   }).join('') + (state.chatSending?`<div class="chat-msg"><div class="text-sm" style="color:var(--muted)">Generating workflow...</div></div>`:'');
   c.scrollTop = c.scrollHeight;
 }
 
 function renderCredentialRows(){
-  const c=$('#cred-rows'); if(!c) return; if(!state.requiredCredentials.length){ c.innerHTML=''; return; }
-  const unique=[...new Set(state.requiredCredentials)];
-  c.innerHTML = `<div class="p-2 space-y-2 border-t" style="border-color:var(--border);background:#1e1e22"><div class="text-xs px-1" style="color:var(--muted)">Required connections</div>
-    ${unique.map(r=>{ const ok=isCredConnected(r); const svc=(r||'').toLowerCase().replace(/^google_/,''); const aiSvc=['gemini','groq','openrouter'].includes(svc); return `<div class="cred-row"><div class="flex items-center gap-2 text-sm"><span>${ok?'🟢':'🔴'}</span><span>${esc(r)}</span>${ok?`<span class="badge b-success">Complete</span>`:''}</div><button data-cred-fix="${esc(r)}" data-ai="${aiSvc?'1':'0'}" class="text-sm" style="color:${ok?'#86efac':'#fca5a5'}">${ok?'Complete >':'Add connection >'}</button></div>`; }).join('')}
+  const c=$('#cred-rows'); if(!c) return;
+  const req = Array.isArray(state.requiredCredentials) ? state.requiredCredentials.filter(Boolean) : [];
+  if(!req.length){ c.innerHTML=''; return; }
+  const unique=[...new Set(req)];
+  c.innerHTML = `<div class="p-2 space-y-2 border-t" style="border-color:var(--border);background:#1e1e22"><div class="text-xs px-1 font-medium" style="color:var(--muted)">Connections required</div>
+    ${unique.map(r=>{ const ok=isCredConnected(r); const svc=(r||'').toLowerCase().replace(/^google_/,''); const aiSvc=['gemini','groq','openrouter'].includes(svc); return `<div class="cred-row"><div class="flex items-center gap-2 text-sm"><span>${ok?'🟢':'🔴'}</span><span>${esc(r)}</span>${ok?`<span class="badge b-success">Complete</span>`:''}</div><button data-cred-fix="${esc(r)}" data-ai="${aiSvc?'1':'0'}" class="text-sm font-medium" style="color:${ok?'#86efac':'#fca5a5'}">${ok?'Complete >':'Add connection >'}</button></div>`; }).join('')}
   </div>`;
 }
 
@@ -352,7 +400,8 @@ function bindGlobal(){
     const pill=t.closest('[data-pill]'); if(pill){ sendChat(pill.getAttribute('data-pill')); }
     if(t.id==='hero-send'){ const hi=$('#hero-input'); if(hi) sendChat(hi.value); }
     if(t.id==='chat-send'){ const ci=$('#chat-input'); if(ci){ state.chatInput=ci.value; sendChat(ci.value); } }
-    const ins=t.closest('[data-insert-code]'); if(ins){ const idx=Number(ins.getAttribute('data-insert-code')); const msg=[...state.chatMessages].reverse().find(m=>m.role==='assistant'&&m.data&&m.data.codeBlocks&&m.data.codeBlocks[idx]); if(msg){ const b=msg.data.codeBlocks[idx]; const cn=defaultNode('code','js'); cn.config.code=b.code||''; cn.name=b.title||'Code / JS Transform'; addNodeFrom(cn); } }
+    const copyBtn=t.closest('[data-copy-code]'); if(copyBtn){ const code=decodeURIComponent(copyBtn.getAttribute('data-copy-code')||''); try{ await navigator.clipboard.writeText(code); const prev=copyBtn.textContent; copyBtn.textContent='Copied'; setTimeout(()=>{ copyBtn.textContent=prev; },1200); }catch{ alert('Copy failed'); } }
+    const ins=t.closest('[data-insert-code]'); if(ins){ const msgIdx=Number(ins.getAttribute('data-insert-code')); const codeIdx=Number(ins.getAttribute('data-code-idx')||'0'); const msg=state.chatMessages[msgIdx]; if(msg){ const { blocks } = extractAssistantDisplay(msg); const b=blocks[codeIdx]; if(b){ const cn=defaultNode('code','js'); cn.config.code=b.code||''; cn.name=b.title||'Code / JS Transform'; addNodeFrom(cn); } } }
     const credFix=t.closest('[data-cred-fix]'); if(credFix){ openVaultForService(credFix.getAttribute('data-cred-fix'), credFix.getAttribute('data-ai')==='1'); }
     if(t.id==='zoom-in'){ state.zoom=Math.min(2,state.zoom+0.1); renderCanvas(); }
     if(t.id==='zoom-out'){ state.zoom=Math.max(0.3,state.zoom-0.1); renderCanvas(); }
@@ -455,16 +504,65 @@ function bindDrawerEvents(){
 async function sendChat(text){
   const msg=(text||'').trim(); if(!msg||state.chatSending) return;
   state.chatInput=''; const ci=$('#chat-input'); if(ci) ci.value=''; const hi=$('#hero-input'); if(hi) hi.value='';
-  state.chatMessages.push({role:'user',content:msg,ts:new Date().toISOString()}); state.chatSending=true; renderChatPanel();
+
+  // push user message
+  state.chatMessages.push({role:'user',content:msg,ts:new Date().toISOString()});
+  state.chatSending=true; renderChatPanel();
   try{
-    const history = state.chatMessages.filter(m=>m.role==='user'||m.role==='assistant').slice(-8).map(m=>({role:m.role,content:m.role==='user'?m.content:(m.content||m.data?.explanation||'')}));
-    const res = await api('/api/agent/chat',{method:'POST', body: JSON.stringify({message:msg, chatId:state.activeChatId||undefined, history, workflow: state.workflow, provider: state.chatProvider||'auto', model: state.chatCustomModel||undefined})});
+    // build conversation history for conversational follow-ups (exclude the just-added user msg duplication is fine; include all recent)
+    const history = state.chatMessages
+      .filter(m=>m.role==='user'||m.role==='assistant')
+      .slice(-12)
+      .map(m=>{
+        if(m.role==='user') return { role:'user', content: m.content || '' };
+        const { explanation } = extractAssistantDisplay(m);
+        return { role:'assistant', content: explanation || m.content || '' };
+      });
+
+    const workflowCtx = {
+      id: state.workflow.id || undefined,
+      name: state.workflow.name || '',
+      nodes: state.workflow.nodes || [],
+      edges: state.workflow.edges || [],
+      groups: state.workflow.groups || [],
+      triggerType: state.workflow.triggerType || 'manual',
+    };
+
+    const res = await api('/api/agent/chat', {
+      method:'POST',
+      body: JSON.stringify({
+        message: msg,
+        chatId: state.activeChatId || undefined,
+        history,
+        workflow: workflowCtx,
+        workflowGraph: workflowCtx,
+        provider: state.chatProvider || 'auto',
+        model: state.chatCustomModel || undefined
+      })
+    });
+
     state.activeChatId = res.chatId || state.activeChatId;
-    state.chatMessages.push({ role:'assistant', content: res.explanation||'', data: res, aiMeta: res.aiMeta, ts:new Date().toISOString() });
-    if(res.workflowGraph) applyWorkflowGraph(res.workflowGraph);
-    if(Array.isArray(res.requiredCredentials)) state.requiredCredentials = res.requiredCredentials;
+    const explanation = (res && typeof res.explanation === 'string') ? res.explanation : '';
+    const assistantMsg = {
+      role:'assistant',
+      content: explanation,
+      data: res || {},
+      aiMeta: res && res.aiMeta ? res.aiMeta : undefined,
+      ts: new Date().toISOString()
+    };
+    state.chatMessages.push(assistantMsg);
+
+    // Immediately update live workflow graph on canvas and required credential cards
+    if(res && res.workflowGraph && typeof res.workflowGraph === 'object') applyWorkflowGraph(res.workflowGraph);
+    else renderCanvas();
+    if(res && Array.isArray(res.requiredCredentials)) state.requiredCredentials = res.requiredCredentials;
+
+    renderChatPanel();
     await refreshChats();
-  }catch(e){ state.chatMessages.push({role:'assistant',content:'Error: '+(e.message||'failed'),ts:new Date().toISOString()}); }
+  }catch(e){
+    state.chatMessages.push({role:'assistant',content:'Error: '+(e.message||'failed'),ts:new Date().toISOString()});
+    renderChatPanel();
+  }
   state.chatSending=false; renderChatPanel();
 }
 

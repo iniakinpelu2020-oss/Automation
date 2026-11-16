@@ -32,7 +32,7 @@ export async function handleChatRequest(request: Request, env: Env, url: URL): P
     }
 
     if (request.method === "POST" && url.pathname === "/api/agent/chat") {
-      const body = await request.json() as { message: string; chatId?: string; history?: Array<{role:string;content:string}>; workflow?: any; provider?: string; model?: string };
+      const body = await request.json() as { message: string; chatId?: string; history?: Array<{role:string;content:string}>; workflow?: any; workflowGraph?: any; provider?: string; model?: string };
       const message = (body.message || "").trim();
       if (!message) return json({ error: "message required" }, 400);
 
@@ -52,14 +52,16 @@ Return ONLY a single valid JSON object (no markdown fences, no extra text) with 
 }
 Rules:
 - Always include workflowGraph with at least a trigger node and relevant nodes/edges; positions should form a clear left-to-right layout.
+- If a currentWorkflow/workflowGraph is provided in context, MODIFY and return the updated complete workflowGraph conversationally based on the user's latest request (do not repeat an unrelated initial workflow).
 - Use type 'code' with subtype 'js' for JavaScript/transform nodes; put code in config.code. Code nodes receive $input (previous node output) and $secrets (object of attached decrypted credential).
 - Use type 'ai' for AI steps (config.prompt, config.model can be set to user-selected model when relevant).
 - Use type 'action' for app/HTTP nodes (subtypes: http, twitter, youtube, gmail, drive, sheets, telegram, discord). Put url/method/body in config and credentialId when a saved vault credential is needed.
 - requiredCredentials must list service ids the user needs connected (use google_youtube/google_gmail/google_drive/google_sheets or twitter/openai/webhook/custom as appropriate; include both plain and google_ prefixed forms when relevant, e.g. ['google_youtube','youtube']).
 - codeBlocks is optional array of any standalone code snippets to show in chat.
 - Be practical and complete.`;
-      const history = Array.isArray(body.history) ? body.history.slice(-10) : [];
-      const userContent = JSON.stringify({ request: message, currentWorkflow: body.workflow || null });
+      const history = Array.isArray(body.history) ? body.history.slice(-12) : [];
+      const current = body.workflow || body.workflowGraph || null;
+      const userContent = JSON.stringify({ request: message, currentWorkflow: current, workflowGraph: current });
       const messages = [{ role: "system", content: system }, ...history, { role: "user", content: userContent }];
 
       let aiRes;
