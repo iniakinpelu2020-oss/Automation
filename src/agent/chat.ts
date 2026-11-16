@@ -45,9 +45,9 @@ Return ONLY a single valid JSON object (no markdown fences, no extra text) with 
   "codeBlocks": [{"language":"javascript","title":"optional title","code":"..."}],
   "workflowGraph": {
     "nodes": [
-      {"id":"n1","type":"trigger|ai|code|action|condition","subtype":"manual|webhook|cron|workers-ai|js|http|twitter|youtube|gmail|drive|sheets|telegram|discord","name":"Label","position":{"x":80,"y":140},"config":{},"credentialId":""}
+      {"id":"n1","type":"trigger|ai|code|action|condition|dialogue|script|branch","subtype":"manual|webhook|cron|time|workers-ai|js|http|twitter|youtube|gmail|drive|sheets|telegram|discord|dialogue|message|if","name":"Label","position":{"x":80,"y":140},"config":{},"credentialId":""}
     ],
-    "edges": [{"id":"e1","source":"n1","target":"n2"}],
+    "edges": [{"id":"e1","source":"n1","target":"n2","sourceHandle":"true|false (for branches)","label":"true|false"}],
     "groups": [{"id":"g1","label":"Group name","nodeIds":["n1","n2"],"color":"#6366f1"}]
   },
   "requiredCredentials": ["youtube","gmail","drive","sheets","twitter","openai","webhook"]
@@ -60,6 +60,7 @@ Rules:
 - Never output raw JSON in explanation. Put code only in codeBlocks.
 - Use type 'code' subtype 'js' for transforms; config.code runs with $input,$secrets. Use type 'ai' for LLM steps. Use type 'action' for app/http with url/method/body in config.
 - requiredCredentials must list service ids needed (e.g. google_youtube,youtube,gmail,drive,sheets,twitter,openai,webhook). Include google_* variants where applicable.
+- Support advanced multi-step flows: conditional/branch nodes (text matching, time triggers like 10:00 AM, API response/status checks) with edges using sourceHandle/label "true"/"false"; dialogue/script nodes for conversational/scripted steps; cron/time triggers. Pass data between steps via {{$json.output}}, {{$input}}, {{nodeId.output}}.
 - Keep codeBlocks optional; include when helpful.`;
       const history = Array.isArray(body.history) ? body.history.slice(-12) : [];
       const current = body.workflow || body.workflowGraph || null;

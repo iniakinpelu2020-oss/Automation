@@ -40,6 +40,8 @@ const $=(s,r=document)=>r.querySelector(s);
 const $$=(s,r=document)=>Array.from(r.querySelectorAll(s));
 const esc=(s='')=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const uid=()=>crypto.randomUUID?crypto.randomUUID():'id-'+Math.random().toString(36).slice(2,10);
+function safeDisplay(v){ if(v==null) return ''; if(typeof v==='string') return v; try { return JSON.stringify(v, null, 2); } catch { return String(v); } }
+function previewText(v,max=160){ const t = safeDisplay(v); if(!t) return ''; return t.length>max ? t.slice(0,max)+'…' : t; }
 
 async function api(path, opts={}){
   const headers=Object.assign({'Content-Type':'application/json'}, opts.headers||{});
@@ -86,9 +88,11 @@ async function loadChat(id){
 
 function defaultNode(type,subtype){
   const base={id:uid(),type,subtype,name:'',position:{x:120,y:120},config:{},credentialId:''};
-  if(type==='trigger'){ base.name=subtype==='cron'?'Cron Schedule':subtype==='webhook'?'Webhook':'Manual Trigger'; if(subtype==='cron') base.config={cron:'0 9 * * *'}; }
+  if(type==='trigger'){ base.name=subtype==='cron'?'Cron / Time Trigger':subtype==='webhook'?'Webhook':'Manual Trigger'; if(subtype==='cron'||subtype==='time') base.config={cron:'0 9 * * *', time:'10:00 AM', timezone:'UTC', payload:{text:'{{ $json.output }}'}}; else base.config={}; }
   else if(type==='ai'){ base.name='AI Agent'; base.config={prompt:'{{ $json.output }}',provider:'auto',customModelId:'',model:'gemini-3-flash-preview',system:'You are a helpful automation agent.'}; }
   else if(type==='code'){ base.name='Code / JS Transform'; base.config={code:'// $input = previous node output, $secrets = attached credential\nreturn $input;'}; }
+  else if(type==='dialogue' || type==='script'){ base.type='dialogue'; base.subtype=subtype||'message'; base.name='Dialogue / Script'; base.config={message:'Hello {{ $json.output }}', payload:{}}; }
+  else if(type==='condition' || type==='branch'){ base.type='condition'; base.subtype=subtype||'if'; base.name='Condition / Branch'; base.config={mode:'text', contains:'', equals:'', sourcePath:'', time:'10:00 AM', status:200}; }
   else { const names={twitter:'X/Twitter',youtube:'YouTube',gmail:'Gmail',drive:'Drive',sheets:'Sheets',telegram:'Telegram',discord:'Discord',http:'HTTP Request',webhook:'Custom Webhook'}; base.name=names[subtype]||'Action'; base.config=(subtype==='http'||subtype==='webhook')?{url:'',method:'POST',body:'{"text":"{{ $json.output }}"}'}:{message:'{{ $json.output }}'}; }
   return base;
 }
@@ -133,7 +137,7 @@ function applyWorkflowGraph(graph){
       credentialId: n.credentialId || ''
     }));
   }
-  if(nodes.length || Array.isArray(graph.edges)) state.workflow.edges = edges.map((e,i)=>({ id: e.id || ('e'+(i+1)), source: e.source, target: e.target })).filter(e=>e.source && e.target);
+  if(nodes.length || Array.isArray(graph.edges)) state.workflow.edges = edges.map((e,i)=>({ id: e.id || ('e'+(i+1)), source: e.source, target: e.target, sourceHandle: e.sourceHandle || e.handle || e.label || undefined, label: e.label || undefined, condition: e.condition || undefined })).filter(e=>e.source && e.target);
   if(nodes.length || Array.isArray(graph.groups)) state.workflow.groups = groups;
   state.autoFitOnNext = nodes.length > 0;
   renderCanvas();
@@ -222,10 +226,14 @@ function renderChatMessages(){
     return;
   }
   c.innerHTML = state.chatMessages.map((m, idx)=>{
-    if(m.role==='user') return `<div class="chat-msg user"><div class="text-sm whitespace-pre-wrap">${esc(m.content||'')}</div></div>`;
+    if(m.role==='user') return `<div class="chat-msg user"><div class="text-sm whitespace-pre-wrap">${esc(safeDisplay(m.content||''))}</div></div>`;
     const { explanation, blocks } = extractAssistantDisplay(m);
     const meta = m.aiMeta || m.data?.aiMeta;
-    return `<div class="chat-msg"><div class="flex items-center justify-between gap-2 mb-1"><div></div>${providerBadge(meta)}</div><div class="text-sm whitespace-pre-wrap" style="line-height:1.55">${esc(explanation)}</div>${renderCodeBlocks(blocks, idx)}</div>`;
+    const data = m.data || {};
+    const g = data.workflowGraph;
+    const hasGraph = g && ((Array.isArray(g.nodes)&&g.nodes.length) || (Array.isArray(g.edges)&&g.edges.length));
+    const loadBtn = hasGraph ? `<div class="mt-2"><button data-load-graph="${idx}" class="btn btn-primary !py-1 !px-3 text-xs">Load into Canvas</button></div>` : '';
+    return `<div class="chat-msg"><div class="flex items-center justify-between gap-2 mb-1"><div></div>${providerBadge(meta)}</div><div class="text-sm whitespace-pre-wrap" style="line-height:1.55">${esc(safeDisplay(explanation))}</div>${renderCodeBlocks(blocks, idx)}${loadBtn}</div>`;
   }).join('') + (state.chatSending?`<div class="chat-msg"><div class="text-sm" style="color:var(--muted)">Generating workflow...</div></div>`:'');
   c.scrollTop = c.scrollHeight;
 }
@@ -247,14 +255,14 @@ function renderChatPanel(){
   const cm=$('#chat-custom-model'); if(cm && document.activeElement!==cm) cm.value = state.chatCustomModel || '';
 }
 
-function nodeIcon(n){ if(n.type==='trigger') return '⚡'; if(n.type==='ai') return '🧠'; if(n.type==='code') return '</>'; const m={twitter:'𝕏',youtube:'▶',gmail:'✉',drive:'△',sheets:'▦',telegram:'✈',discord:'💬',http:'⇄',webhook:'⇄'}; return m[n.subtype]||'⚙'; }
-function badge(status){ const c={idle:'b-idle',running:'b-running',success:'b-success',error:'b-error'}[status]||'b-idle'; const l={idle:'Idle',running:'Running',success:'Success',error:'Error'}[status]||'Idle'; return `<span class="badge ${c}">${l}</span>`; }
+function nodeIcon(n){ if(!n) return '⚙'; if(n.type==='trigger') return '⚡'; if(n.type==='ai') return '🧠'; if(n.type==='code') return '</>'; if(n.type==='condition'||n.type==='branch'||n.subtype==='condition'||n.subtype==='if') return '⑂'; if(n.type==='dialogue'||n.type==='script'||n.subtype==='dialogue'||n.subtype==='message') return '💬'; const m={twitter:'𝕏',youtube:'▶',gmail:'✉',drive:'△',sheets:'▦',telegram:'✈',discord:'💬',http:'⇄',webhook:'⇄',cron:'⏱',time:'⏰'}; return m[n.subtype]||'⚙'; }
+function badge(status){ const c={idle:'b-idle',running:'b-running',success:'b-success',error:'b-error',skipped:'b-idle'}[status]||'b-idle'; const l={idle:'Idle',running:'Running',success:'Success',error:'Error',skipped:'Skipped'}[status]||'Idle'; return `<span class="badge ${c}">${l}</span>`; }
 
 function renderCanvas(){
   const world=$('#canvas-world'); if(!world) return;
   world.style.transform=`translate(${state.pan.x}px,${state.pan.y}px) scale(${state.zoom})`;
   const groups=(state.workflow.groups||[]).map(g=>{ const nodes=(g.nodeIds||[]).map(id=>getNode(id)).filter(Boolean); if(!nodes.length) return ''; const xs=nodes.map(n=>n.position.x), ys=nodes.map(n=>n.position.y); const x=Math.min(...xs)-20, y=Math.min(...ys)-30, w=Math.max(...xs)+210-x, h=Math.max(...ys)+120-y; return `<div class="group-frame" style="left:${x}px;top:${y}px;width:${w}px;height:${h}px"><div class="group-label">${esc(g.label||'Group')}</div></div>`; }).join('');
-  const nodes=state.workflow.nodes.map(n=>{ const st=nodeStatus(n.id), sel=state.selectedNodeId===n.id?'selected':''; const border = st==='running'?'border-color:#3b82f6;box-shadow:0 0 0 2px rgba(59,130,246,.25),0 10px 30px rgba(0,0,0,.35)': st==='success'?'border-color:#10b981;box-shadow:0 0 0 2px rgba(16,185,129,.2),0 10px 30px rgba(0,0,0,.35)': st==='error'?'border-color:#ef4444;box-shadow:0 0 0 2px rgba(239,68,68,.2),0 10px 30px rgba(0,0,0,.35)':''; const icon = st==='running'?'<span class="inline-block animate-spin">⟳</span>': st==='success'?'✓': st==='error'?'!':nodeIcon(n); return `<div class="node ${sel}" data-node-id="${n.id}" style="left:${n.position?.x||0}px;top:${n.position?.y||0}px;${border}"><div class="port in"></div><div class="port out" data-port-out="${n.id}"></div><div data-drag-handle="${n.id}" class="cursor-grab active:cursor-grabbing"><div class="icon">${icon}</div><div class="text-sm font-medium truncate">${esc(n.name||n.type)}</div><div class="text-[11px] truncate" style="color:var(--muted)">${esc(n.subtype||n.type)}</div><div class="mt-1">${badge(st)}</div></div></div>`; }).join('');
+  const nodes=state.workflow.nodes.map(n=>{ const st=nodeStatus(n.id), sel=state.selectedNodeId===n.id?'selected':''; const border = st==='running'?'border-color:#3b82f6;box-shadow:0 0 0 2px rgba(59,130,246,.25),0 10px 30px rgba(0,0,0,.35)': st==='success'?'border-color:#10b981;box-shadow:0 0 0 2px rgba(16,185,129,.2),0 10px 30px rgba(0,0,0,.35)': st==='error'?'border-color:#ef4444;box-shadow:0 0 0 2px rgba(239,68,68,.2),0 10px 30px rgba(0,0,0,.35)': st==='skipped'?'border-color:#52525b;opacity:.65':''; const icon = st==='running'?'<span class="inline-block animate-spin">⟳</span>': st==='success'?'✓': st==='error'?'!': st==='skipped'?'↷': nodeIcon(n); return `<div class="node ${sel}" data-node-id="${n.id}" style="left:${n.position?.x||0}px;top:${n.position?.y||0}px;${border}"><div class="port in"></div><div class="port out" data-port-out="${n.id}"></div><div data-drag-handle="${n.id}" class="cursor-grab active:cursor-grabbing"><div class="icon">${icon}</div><div class="text-sm font-medium truncate">${esc(safeDisplay(n.name||n.type))}</div><div class="text-[11px] truncate" style="color:var(--muted)">${esc(safeDisplay(n.subtype||n.type))}</div><div class="mt-1">${badge(st)}</div></div></div>`; }).join('');
   world.innerHTML = renderEdgesSvg()+groups+nodes;
   bindCanvasEvents();
 }
@@ -262,19 +270,42 @@ function renderCanvasStatus(){
   $('#canvas-world .node').forEach(el=>{
     const id=el.getAttribute('data-node-id'); const st=nodeStatus(id);
     const b=el.querySelector('.badge'); if(b){ const tmp=document.createElement('div'); tmp.innerHTML=badge(st); b.replaceWith(tmp.firstChild); }
-    const iconWrap=el.querySelector('.icon'); if(iconWrap){ iconWrap.innerHTML = st==='running'?'<span class="inline-block animate-spin">⟳</span>': st==='success'?'✓': st==='error'?'!':nodeIcon(getNode(id)||{}); }
-    el.style.borderColor = st==='running'?'#3b82f6': st==='success'?'#10b981': st==='error'?'#ef4444':'';
+    const iconWrap=el.querySelector('.icon'); if(iconWrap){ iconWrap.innerHTML = st==='running'?'<span class="inline-block animate-spin">⟳</span>': st==='success'?'✓': st==='error'?'!': st==='skipped'?'↷': nodeIcon(getNode(id)||{}); }
+    el.style.borderColor = st==='running'?'#3b82f6': st==='success'?'#10b981': st==='error'?'#ef4444': st==='skipped'?'#52525b':'';
+    el.style.opacity = st==='skipped' ? '0.65' : '';
   });
 }
 function renderEdgesSvg(){
-  const paths=state.workflow.edges.map(e=>{ const s=getNode(e.source),t=getNode(e.target); if(!s||!t) return ''; const x1=(s.position?.x||0)+180,y1=(s.position?.y||0)+50,x2=(t.position?.x||0),y2=(t.position?.y||0)+50; const dx=Math.max(60,Math.abs(x2-x1)*0.5); const d=`M ${x1} ${y1} C ${x1+dx} ${y1}, ${x2-dx} ${y2}, ${x2} ${y2}`; const st=nodeStatus(e.target); const color=st==='success'?'#10b981':st==='error'?'#ef4444':st==='running'?'#3b82f6':'#52525b'; return `<path d="${d}" stroke="${color}" stroke-width="2.5" fill="none" marker-end="url(#arrow-${st||'idle'})" />`; }).join('');
-  return `<svg id="edges-svg" width="5000" height="4000"><defs>${['idle','running','success','error'].map(s=>{const c={idle:'#52525b',running:'#3b82f6',success:'#10b981',error:'#ef4444'}[s]; return `<marker id="arrow-${s}" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="${c}" /></marker>`;}).join('')}</defs>${paths}</svg>`;
+  const paths=state.workflow.edges.map(e=>{ const s=getNode(e.source),t=getNode(e.target); if(!s||!t) return ''; const x1=(s.position?.x||0)+180,y1=(s.position?.y||0)+50,x2=(t.position?.x||0),y2=(t.position?.y||0)+50; const dx=Math.max(60,Math.abs(x2-x1)*0.5); const d=`M ${x1} ${y1} C ${x1+dx} ${y1}, ${x2-dx} ${y2}, ${x2} ${y2}`; const st=nodeStatus(e.target); const color=st==='success'?'#10b981':st==='error'?'#ef4444':st==='running'?'#3b82f6':st==='skipped'?'#3f3f46':'#52525b'; return `<path d="${d}" stroke="${color}" stroke-width="2.5" fill="none" marker-end="url(#arrow-${st||'idle'})" />`; }).join('');
+  return `<svg id="edges-svg" width="5000" height="4000"><defs>${['idle','running','success','error','skipped'].map(s=>{const c={idle:'#52525b',running:'#3b82f6',success:'#10b981',error:'#ef4444',skipped:'#3f3f46'}[s]; return `<marker id="arrow-${s}" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="${c}" /></marker>`;}).join('')}</defs>${paths}</svg>`;
 }
 
 function renderLogsOnly(){
   const c=$('#logs-list'); if(!c) return;
   if(!state.logs.length){ c.innerHTML=`<div class="text-sm p-2" style="color:var(--muted)">No executions yet.</div>`; return; }
-  c.innerHTML = state.logs.slice(0,20).map(l=>{ let nodeHtml=''; if(l.nodeLogs){ try{ const nls=JSON.parse(l.nodeLogs); nodeHtml=`<div class="mt-2 flex flex-wrap gap-1">${nls.map(n=>`<span class="badge ${n.status==='success'?'b-success':n.status==='error'?'b-error':n.status==='running'?'b-running':'b-idle'}">${esc(n.name)}:${esc(n.status)}</span>`).join('')}</div>`;}catch{} } const bc=l.status==='completed'?'b-success':l.status==='failed'?'b-error':l.status==='running'?'b-running':'b-idle'; return `<div class="rounded-lg p-2 mb-2" style="background:#222226;border:1px solid var(--border)"><div class="flex items-center justify-between gap-2"><div class="text-sm font-medium truncate">${esc(l.workflowName||l.prompt||'Run')}</div><span class="badge ${bc}">${esc(l.status)}</span></div><div class="text-[11px]" style="color:var(--muted)">${esc(l.updatedAt||l.createdAt||'')}</div>${nodeHtml}${l.error?`<pre class="mt-2 text-xs p-2 rounded" style="background:rgba(239,68,68,.08);color:#fca5a5;white-space:pre-wrap">${esc(l.error)}</pre>`:''}</div>`; }).join('');
+  c.innerHTML = state.logs.slice(0,20).map(l=>{ let nodeHtml='';
+    if(l.nodeLogs){
+      try{
+        const nls = typeof l.nodeLogs === 'string' ? JSON.parse(l.nodeLogs) : l.nodeLogs;
+        if(Array.isArray(nls)){
+          nodeHtml = `<div class="mt-2 space-y-1">${nls.map(n=>{
+            const st = n.status || 'idle';
+            const bc = st==='success'?'b-success': st==='error'?'b-error': st==='running'?'b-running': st==='skipped'?'b-idle':'b-idle';
+            const active = st==='running' ? 'ring-1 ring-blue-500/40' : '';
+            const outPrev = previewText(n.output ?? n.result ?? (n.skipped ? {skipped:true} : ''), 180);
+            const inPrev = previewText(n.input, 120);
+            const err = n.error ? `<div class="mt-1 text-[11px]" style="color:#fca5a5">${esc(safeDisplay(n.error))}</div>` : '';
+            const io = (inPrev||outPrev) ? `<div class="text-[11px] mt-1" style="color:var(--muted)">${inPrev?'<span style="color:#a1a1aa">in:</span> '+esc(inPrev)+'<br>':''}${outPrev?'<span style="color:#a1a1aa">out:</span> '+esc(outPrev):''}</div>` : '';
+            const branch = (n.branch != null) ? ` <span class="text-[10px]" style="color:#93c5fd">→ ${esc(safeDisplay(n.branch))}</span>` : (n.output && n.output.branch != null ? ` <span class="text-[10px]" style="color:#93c5fd">→ ${esc(safeDisplay(n.output.branch))}</span>` : '');
+            return `<div class="rounded p-1.5 ${active}" style="background:#18181b;border:1px solid ${st==='running'?'#2563eb':st==='success'?'#065f46':st==='error'?'#7f1d1d':'#2f2f35'}"><div class="flex items-center justify-between gap-2"><div class="text-xs font-medium truncate">${esc(safeDisplay(n.name||n.nodeId||'Node'))}${branch}</div><span class="badge ${bc}">${esc(st)}</span></div>${io}${err}</div>`;
+          }).join('')}</div>`;
+        }
+      }catch{}
+    }
+    const bc=l.status==='completed'?'b-success':l.status==='failed'?'b-error':l.status==='running'?'b-running':'b-idle';
+    const errStr = l.error ? safeDisplay(l.error) : '';
+    return `<div class="rounded-lg p-2 mb-2" style="background:#222226;border:1px solid var(--border)"><div class="flex items-center justify-between gap-2"><div class="text-sm font-medium truncate">${esc(safeDisplay(l.workflowName||l.prompt||'Run'))}</div><span class="badge ${bc}">${esc(safeDisplay(l.status))}</span></div><div class="text-[11px]" style="color:var(--muted)">${esc(safeDisplay(l.updatedAt||l.createdAt||''))}</div>${nodeHtml}${errStr?`<pre class="mt-2 text-xs p-2 rounded" style="background:rgba(239,68,68,.08);color:#fca5a5;white-space:pre-wrap">${esc(errStr)}</pre>`:''}</div>`;
+  }).join('');
 }
 
 function providerOptions(selected){ const opts=[['auto','Auto (Gemini → Groq → Cloudflare)'],['gemini-flash','Gemini 3 Flash'],['gemini-pro','Gemini 3.1 Pro'],['groq','Groq (Llama 3.3 70B)'],['openrouter','OpenRouter'],['cloudflare','Cloudflare Workers AI'],['custom','Custom Model ID...']]; return opts.map(([v,l])=>`<option value="${v}" ${selected===v?'selected':''}>${l}</option>`).join(''); }
@@ -303,7 +334,7 @@ function renderNodeDrawer(){
   else if(n.type==='code'){ fields=`<label class="block mb-3"><span class="label">JavaScript ($input, $secrets)</span><textarea id="nd-code" rows="12" class="input" style="font-family:ui-monospace,monospace">${esc(n.config?.code||'return $input;')}</textarea></label>`; }
   else { fields=`<label class="block mb-3"><span class="label">Action Type</span><select id="nd-subtype" class="select">${[['twitter','X/Twitter'],['youtube','YouTube'],['gmail','Gmail'],['drive','Drive'],['sheets','Sheets'],['http','HTTP Request'],['webhook','Custom Webhook'],['telegram','Telegram'],['discord','Discord']].map(([v,l])=>`<option value="${v}" ${n.subtype===v?'selected':''}>${l}</option>`).join('')}</select></label><label class="block mb-3"><span class="label">HTTP Method</span><select id="nd-method" class="select">${['POST','GET','PUT','PATCH','DELETE'].map(m=>`<option ${String(n.config?.method||'POST').toUpperCase()===m?'selected':''}>${m}</option>`).join('')}</select></label><label class="block mb-3"><span class="label">URL / Endpoint</span><input id="nd-url" class="input" placeholder="https://..." value="${esc(n.config?.url||'')}" /></label><label class="block mb-3"><span class="label">Body / Message</span><textarea id="nd-body" rows="5" class="input">${esc(typeof n.config?.body==='string'?n.config.body:(n.config?.body?JSON.stringify(n.config.body,null,2):(n.config?.message||'')))}</textarea></label>`; }
   const out = getLatestNodeOutput(n.id);
-  const outStr = out===undefined ? 'No output yet. Run the workflow to see this node\'s latest output.' : (typeof out==='string' ? out : JSON.stringify(out, null, 2));
+  const outStr = out===undefined ? 'No output yet. Run the workflow to see this node\'s latest output.' : safeDisplay(out);
   const configHtml = `<label class="block mb-3"><span class="label">Node Name</span><input id="nd-name" class="input" value="${esc(n.name||'')}" /></label>${fields}
       <label class="block mb-3"><span class="label">Attached Vault Credential</span><div class="flex gap-2"><select id="nd-cred" class="select flex-1">${credOpts}</select><button id="nd-add-cred" class="btn text-xs">+ Add</button></div></label>
       <div class="text-xs p-2 rounded" style="background:#18181b;border:1px solid var(--border);color:var(--muted)">Variables: <code>{{ $json.output }}</code>, <code>{{$input}}</code>, <code>{{nodeId.output}}</code>. Code nodes receive <code>$input</code> and <code>$secrets</code>.</div>`;
@@ -455,6 +486,7 @@ function bindGlobal(){
     if(t.id==='hero-send'){ const hi=$('#hero-input'); if(hi) sendChat(hi.value); }
     if(t.id==='chat-send'){ const ci=$('#chat-input'); if(ci){ state.chatInput=ci.value; sendChat(ci.value); } }
     const copyBtn=t.closest('[data-copy-code]'); if(copyBtn){ const code=decodeURIComponent(copyBtn.getAttribute('data-copy-code')||''); try{ await navigator.clipboard.writeText(code); const prev=copyBtn.textContent; copyBtn.textContent='Copied'; setTimeout(()=>{ copyBtn.textContent=prev; },1200); }catch{ alert('Copy failed'); } }
+    const loadBtn=t.closest('[data-load-graph]'); if(loadBtn){ const idx=Number(loadBtn.getAttribute('data-load-graph')); const m=state.chatMessages[idx]; const g=m && m.data && m.data.workflowGraph; if(g){ applyWorkflowGraph(g); state.view = state.view==='assistant' ? 'split' : state.view; const main=$('#main'); if(main) main.dataset.viewKey=''; render(); } }
     const ins=t.closest('[data-insert-code]'); if(ins){ const msgIdx=Number(ins.getAttribute('data-insert-code')); const codeIdx=Number(ins.getAttribute('data-code-idx')||'0'); const msg=state.chatMessages[msgIdx]; if(msg){ const { blocks } = extractAssistantDisplay(msg); const b=blocks[codeIdx]; if(b){ const cn=defaultNode('code','js'); cn.config.code=b.code||''; cn.name=b.title||'Code / JS Transform'; addNodeFrom(cn); } } }
     const credFix=t.closest('[data-cred-fix]'); if(credFix){ openVaultForService(credFix.getAttribute('data-cred-fix'), credFix.getAttribute('data-ai')==='1'); }
     if(t.id==='zoom-in'){ state.zoom=Math.min(2,state.zoom+0.1); renderCanvas(); }
@@ -631,7 +663,7 @@ async function sendChat(text){
       }
     }
   }catch(e){
-    state.chatMessages.push({role:'assistant',content:'Error: '+(e.message||'failed'),ts:new Date().toISOString()});
+    state.chatMessages.push({role:'assistant',content:'Error: '+safeDisplay(e && e.message ? e.message : e),ts:new Date().toISOString()});
     renderChatPanel();
   }
   state.chatSending=false; renderChatPanel();
