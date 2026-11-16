@@ -30,8 +30,16 @@ export class AgentDurableObject {
         updatedAt TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS idx_workflows_updatedAt ON workflows(updatedAt DESC);
+
+      CREATE TABLE IF NOT EXISTS chats (
+        id TEXT PRIMARY KEY,
+        title TEXT NOT NULL,
+        messages TEXT NOT NULL DEFAULT '[]',
+        createdAt TEXT NOT NULL,
+        updatedAt TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_chats_updatedAt ON chats(updatedAt DESC);
     `);
-    // best-effort migrations for older schema
     try { this.sql.exec(`ALTER TABLE logs ADD COLUMN workflowId TEXT`); } catch {}
     try { this.sql.exec(`ALTER TABLE logs ADD COLUMN workflowName TEXT`); } catch {}
     try { this.sql.exec(`ALTER TABLE logs ADD COLUMN nodeLogs TEXT`); } catch {}
@@ -40,6 +48,7 @@ export class AgentDurableObject {
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
     try {
+      // --- Logs ---
       if (request.method === "POST" && url.pathname === "/log") {
         const entry = (await request.json()) as LogEntry;
         this.sql.exec(
@@ -63,7 +72,6 @@ export class AgentDurableObject {
         const body = (await request.json()) as {
           id: string; status?: string; result?: string; error?: string; nodeLogs?: string; workflowId?: string; workflowName?: string; prompt?: string;
         };
-        // read current to allow partial updates
         const cur = [...this.sql.exec(`SELECT * FROM logs WHERE id = ?`, body.id)][0] as any;
         if (!cur) return Response.json({ error: "not found" }, { status: 404 });
         this.sql.exec(
@@ -102,7 +110,7 @@ export class AgentDurableObject {
         return Response.json({ logs });
       }
 
-      // Workflows CRUD
+      // --- Workflows ---
       if (request.method === "POST" && url.pathname === "/workflows/save") {
         const body = (await request.json()) as { id?: string; name: string; data: unknown };
         const id = body.id || crypto.randomUUID();
@@ -129,11 +137,51 @@ export class AgentDurableObject {
         return Response.json({ workflows });
       }
 
-      if (request.method === "GET" && url.pathname.startsWith("/workflows/")) {
-        const id = url.pathname.split("/").pop() || "";
-        const row = [...this.sql.exec(`SELECT id, name, data, createdAt, updatedAt FROM workflows WHERE id = ?`, id)][0] as any;
+      // --- Chats (Assistant history) ---
+      if (request.method === "GET" && url.pathname === "/chats") {
+        const cursor = this.sql.exec(`SELECT id, title, createdAt, updatedAt FROM chats ORDER BY updatedAt DESC LIMIT 50`);
+        const chats = [...cursor].map((row) => ({
+          id: String(row.id), title: String(row.title), createdAt: String(row.createdAt), updatedAt: String(row.updatedAt),
+        }));
+        return Response.json({ chats });
+      }
+
+      if (request.method === "POST" && url.pathname === "/chats/save") {
+        const body = (await request.json()) as { id?: string; title?: string };
+        const id = body.id || crypto.randomUUID();
+        const now = new Date().toISOString();
+        const existing = [...this.sql.exec(`SELECT id FROM chats WHERE id = ?`, id)][0] as any;
+        if (existing) {
+          this.sql.exec(`UPDATE chats SET title = ?, updatedAt = ? WHERE id = ?`, body.title || "Chat", now, id);
+        } else {
+          this.sql.exec(`INSERT INTO chats (id, title, messages, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?)`, id, body.title || "New Chat", "[]", now, now);
+        }
+        return Response.json({ ok: true, id });
+      }
+
+      if (request.method === "POST" && url.pathname === "/chats/append") {
+        const body = (await request.json()) as { chatId: string; title?: string; messages: any[] };
+        const id = body.chatId;
+        const now = new Date().toISOString();
+        const existing = [...this.sql.exec(`SELECT id, messages, title FROM chats WHERE id = ?`, id)][0] as any;
+        let msgs: any[] = [];
+        if (existing) { try { msgs = JSON.parse(String(existing.messages || "[]")); } catch { msgs = []; } }
+        msgs.push(...(body.messages || []));
+        const title = body.title || (existing ? String(existing.title) : "New Chat");
+        if (existing) {
+          this.sql.exec(`UPDATE chats SET title = ?, messages = ?, updatedAt = ? WHERE id = ?`, title, JSON.stringify(msgs), now, id);
+        } else {
+          this.sql.exec(`INSERT INTO chats (id, title, messages, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?)`, id, title, JSON.stringify(msgs), now, now);
+        }
+        return Response.json({ ok: true, id });
+      }
+
+      if (request.method === "GET" && url.pathname.startsWith("/chats/")) {
+        const id = decodeURIComponent(url.pathname.slice("/chats/".length));
+        const row = [...this.sql.exec(`SELECT id, title, messages, createdAt, updatedAt FROM chats WHERE id = ?`, id)][0] as any;
         if (!row) return Response.json({ error: "not found" }, { status: 404 });
-        return Response.json({ id: String(row.id), name: String(row.name), data: JSON.parse(String(row.data)), createdAt: String(row.createdAt), updatedAt: String(row.updatedAt) });
+        let messages: any[] = []; try { messages = JSON.parse(String(row.messages || "[]")); } catch {}
+        return Response.json({ id: String(row.id), title: String(row.title), messages, createdAt: String(row.createdAt), updatedAt: String(row.updatedAt) });
       }
 
       return new Response("Not found", { status: 404 });
