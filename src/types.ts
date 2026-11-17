@@ -34,8 +34,8 @@ export interface VaultItem {
 // Workflow graph types
 export interface WorkflowNode {
   id: string;
-  type: "trigger" | "ai" | "action" | "code" | "condition";
-  subtype?: string; // manual, webhook, cron, js, twitter, youtube, gmail, drive, sheets, http, telegram, discord, custom
+  type: "trigger" | "ai" | "action" | "code" | "condition" | "dialogue" | "script" | "branch" | "switch";
+  subtype?: string; // manual, webhook, cron, time, js, twitter, youtube, gmail, drive, sheets, http, telegram, discord, dialogue, script, text, custom
   name: string;
   position?: { x: number; y: number };
   config: Record<string, unknown>;
@@ -46,6 +46,9 @@ export interface WorkflowEdge {
   id: string;
   source: string;
   target: string;
+  sourceHandle?: string; // e.g. "true" | "false" | "match" | "default" for branching
+  label?: string;
+  condition?: string;
 }
 
 export interface WorkflowGroup {
