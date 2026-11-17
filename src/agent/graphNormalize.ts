@@ -13,7 +13,8 @@ const NODE_TYPES = new Set([
   "switch",
 ]);
 
-const TYPE_ALIASES: Record<string, WorkflowNode["type"]> = {
+// Kept as plain strings so the file compiles against older node-type unions.
+const TYPE_ALIASES: Record<string, string> = {
   start: "trigger",
   manual: "trigger",
   webhook: "trigger",
@@ -88,7 +89,7 @@ export function normalizeGraph(raw: unknown, limit = 80): NormalizedGraph {
     const subtype = str(n.subtype ?? n.subType ?? n.sub_type).toLowerCase();
     let type: WorkflowNode["type"];
     if (NODE_TYPES.has(typeRaw)) type = typeRaw as WorkflowNode["type"];
-    else if (TYPE_ALIASES[typeRaw]) type = TYPE_ALIASES[typeRaw];
+    else if (TYPE_ALIASES[typeRaw]) type = TYPE_ALIASES[typeRaw] as WorkflowNode["type"];
     else if (NODE_TYPES.has(subtype)) type = subtype as WorkflowNode["type"];
     else if (typeRaw.includes("trigger")) type = "trigger";
     else type = "action";
@@ -137,14 +138,14 @@ export function normalizeGraph(raw: unknown, limit = 80): NormalizedGraph {
     const key = `${source}->${target}:${handle}`;
     if (edgeKeys.has(key)) return;
     edgeKeys.add(key);
-    edges.push({
-      id: str(e.id, `e${i + 1}`),
-      source,
-      target,
-      sourceHandle: handle || undefined,
-      label: str(e.label) || undefined,
-      condition: str(e.condition) || undefined,
-    });
+    const edge: WorkflowEdge = { id: str(e.id, `e${i + 1}`), source, target };
+    // Branch metadata lives outside the older WorkflowEdge shape, so attach it
+    // defensively rather than relying on the deployed type version.
+    const meta = edge as WorkflowEdge & { sourceHandle?: string; label?: string; condition?: string };
+    meta.sourceHandle = handle || undefined;
+    meta.label = str(e.label) || undefined;
+    meta.condition = str(e.condition) || undefined;
+    edges.push(edge);
   });
 
   const rawGroups = Array.isArray(src.groups) ? src.groups.slice(0, 25) : [];
