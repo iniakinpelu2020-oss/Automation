@@ -46,6 +46,10 @@ async function readKey(env: Env, uid: string, token: string, serviceId: string, 
   return null;
 }
 
+// Google retires/renames preview model ids regularly; retry stable names on 400/404
+// instead of silently falling through to the last-resort Llama model.
+const GEMINI_FALLBACK_MODELS = ["gemini-2.5-flash", "gemini-2.0-flash"];
+
 function geminiBadge(model: string): string {
   if (model.includes("flash")) return "⚡ Gemini 3 Flash";
   if (model.includes("pro")) return "🧠 Gemini 3.1 Pro";
@@ -144,13 +148,28 @@ export async function runAI(env: Env, uid: string, token: string, opts: AIReques
   const groqKey = await readKey(env, uid, token, "groq", ["apiKey", "key", "GROQ_API_KEY"]);
   const openrouterKey = await readKey(env, uid, token, "openrouter", ["apiKey", "key", "OPENROUTER_API_KEY"]);
 
-  const effectiveProvider = provider || settings.provider || "auto";
+  // An explicit pick in the chat selector wins; otherwise honour the provider
+  // saved in Settings (the chat selector itself defaults to "auto").
+  const effectiveProvider: AIProvider =
+    opts.provider && opts.provider !== "auto"
+      ? opts.provider
+      : ((settings.provider as AIProvider) || "auto");
   const effectiveCustom = customModel || settings.customModelId || "";
 
   const tryGemini = async (modelId: string): Promise<AIResult> => {
     if (!geminiKey) throw Object.assign(new Error("Gemini key not configured"), { status: 401, skip: true });
-    const r = await callGemini(geminiKey, modelId, messages, jsonMode);
-    return { text: jsonMode ? stripFences(r.text) : r.text, provider: "gemini", model: r.model, badge: geminiBadge(r.model) };
+    const chain = [modelId, ...GEMINI_FALLBACK_MODELS.filter((m) => m !== modelId)];
+    let lastErr: any = null;
+    for (const id of chain) {
+      try {
+        const r = await callGemini(geminiKey, id, messages, jsonMode);
+        return { text: jsonMode ? stripFences(r.text) : r.text, provider: "gemini", model: r.model, badge: geminiBadge(r.model) };
+      } catch (e: any) {
+        lastErr = e;
+        if (e?.status !== 400 && e?.status !== 404) throw e;
+      }
+    }
+    throw lastErr;
   };
   const tryGroq = async (modelId?: string): Promise<AIResult> => {
     if (!groqKey) throw Object.assign(new Error("Groq key not configured"), { status: 401, skip: true });
