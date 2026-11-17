@@ -12,6 +12,12 @@
   "ai": {
     "binding": "AI"
   },
+  "r2_buckets": [
+    {
+      "binding": "DRIVE",
+      "bucket_name": "apex-drive"
+    }
+  ],
   "durable_objects": {
     "bindings": [
       {

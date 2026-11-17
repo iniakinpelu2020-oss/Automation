@@ -5,6 +5,7 @@ export interface Env {
   AUTOMATION_WORKFLOW: Workflow;
   ENCRYPTION_SECRET: string;
   AI: Ai;
+  DRIVE: R2Bucket;
 }
 
 export interface FirebaseTokenPayload {
