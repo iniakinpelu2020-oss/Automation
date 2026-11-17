@@ -2,6 +2,7 @@ import type { AgentRunRequest, Env, LogEntry, WorkflowGraph, WorkflowParams } fr
 import { requireAuth } from "../vault/auth";
 import { runAI } from "./aiRouter";
 import { syncSchedule } from "./scheduler";
+import { mirrorItem } from "../vault/offline";
 
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {
@@ -72,14 +73,21 @@ export async function handleAgentRequest(request: Request, env: Env, url: URL): 
       const { encryptJSON } = await import("../vault/crypto");
       const { setVaultItem } = await import("../vault/firestore");
       const enc = await encryptJSON(env.ENCRYPTION_SECRET, body || {});
-      await setVaultItem(auth.uid, auth.token, {
+      const settingsItem = {
         serviceId: "ai_settings",
         label: "AI Settings",
         ciphertext: enc.ciphertext,
         iv: enc.iv,
         salt: enc.salt,
         updatedAt: new Date().toISOString(),
-      });
+      };
+      await setVaultItem(auth.uid, auth.token, settingsItem);
+      // Scheduled runs read this from the offline copy, so keep it current.
+      try {
+        await mirrorItem(env, auth.uid, settingsItem);
+      } catch (err) {
+        console.error("offline mirror failed", err instanceof Error ? err.message : err);
+      }
       return json({ ok: true });
     }
 
