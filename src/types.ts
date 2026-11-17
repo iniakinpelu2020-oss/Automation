@@ -1,6 +1,7 @@
 export interface Env {
   ASSETS: Fetcher;
   AGENT_STATE: DurableObjectNamespace;
+  SCHEDULER: DurableObjectNamespace;
   AUTOMATION_WORKFLOW: Workflow;
   ENCRYPTION_SECRET: string;
   AI: Ai;

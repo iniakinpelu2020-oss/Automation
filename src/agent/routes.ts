@@ -1,6 +1,7 @@
 import type { AgentRunRequest, Env, LogEntry, WorkflowGraph, WorkflowParams } from "../types";
 import { requireAuth } from "../vault/auth";
 import { runAI } from "./aiRouter";
+import { syncSchedule } from "./scheduler";
 
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {
@@ -48,7 +49,16 @@ export async function handleAgentRequest(request: Request, env: Env, url: URL): 
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id: body.id, name: body.name, data: body.data }),
       });
-      return new Response(res.body, { status: res.status, headers: { "Content-Type": "application/json" } });
+      const saved = (await res.json().catch(() => null)) as { id?: string } | null;
+      // Arm the cron scheduler when the saved graph has a cron trigger, disarm it otherwise.
+      if (saved && saved.id) {
+        try {
+          await syncSchedule(env, auth.uid, saved.id, body.name, body.data);
+        } catch (err) {
+          console.error("schedule sync failed", err instanceof Error ? err.message : err);
+        }
+      }
+      return json(saved ?? { error: "save failed" }, res.status);
     }
 
     // AI Settings (stored in vault as ai_settings)

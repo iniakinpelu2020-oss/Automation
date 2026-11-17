@@ -17,6 +17,10 @@
       {
         "name": "AGENT_STATE",
         "class_name": "AgentDurableObject"
+      },
+      {
+        "name": "SCHEDULER",
+        "class_name": "WorkflowScheduler"
       }
     ]
   },
@@ -31,6 +35,13 @@
     {
       "tag": "v1",
       "new_sqlite_classes": ["AgentDurableObject"]
+    },
+    {
+      "tag": "v2",
+      "new_sqlite_classes": ["WorkflowScheduler"]
     }
-  ]
+  ],
+  "triggers": {
+    "crons": ["*/5 * * * *"]
+  }
 }

@@ -4,9 +4,11 @@ import { handleAgentRequest } from "./agent/routes";
 import { handleChatRequest } from "./agent/chat";
 import { handleToolsRequest } from "./agent/tools";
 import { handleOAuthStart, handleOAuthCallback } from "./vault/oauth";
+import { handleScheduled } from "./agent/scheduler";
 
 export { AgentDurableObject } from "./agent/durable";
 export { AutomationWorkflow } from "./agent/workflow";
+export { WorkflowScheduler } from "./agent/scheduler";
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -31,5 +33,10 @@ export default {
 
     // Fallback all non-/api/* requests to static assets (SPA)
     return env.ASSETS.fetch(request);
+  },
+
+  // Cron entry point: fires saved workflows that have a schedule attached.
+  async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+    ctx.waitUntil(handleScheduled(env, controller.scheduledTime));
   },
 } satisfies ExportedHandler<Env>;
