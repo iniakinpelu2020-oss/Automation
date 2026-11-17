@@ -45,14 +45,38 @@ export function googleOAuthConfigured(env: Env): boolean {
 }
 
 export async function handleOAuthStart(request: Request, env: Env, url: URL): Promise<Response> {
+  // The app opens this endpoint in a popup window, and a browser navigation cannot
+  // carry an Authorization header. Accept the signed-in Firebase ID token from the
+  // ?token= query string as a fallback; a real header still wins when present.
+  const queryToken = (url.searchParams.get("token") || "").trim();
+  const authRequest = request.headers.get("Authorization") || !queryToken
+    ? request
+    : new Request(request.url, { headers: { Authorization: `Bearer ${queryToken}` } });
   let auth: AuthContext;
-  try { auth = await requireAuth(request); } catch (e) { return e as Response; }
+  try {
+    auth = await requireAuth(authRequest);
+  } catch {
+    return htmlPage(
+      "Please sign in again",
+      "<p>Your session could not be verified, so the Google connection was not started.</p><p style=\"color:#9ca3af;font-size:13px\">Close this window, sign in to Apex Automation again, then retry the connection.</p>",
+      false,
+      401,
+    );
+  }
   const service = (url.searchParams.get("service") || "").toLowerCase();
-  if (!SCOPES[service]) return new Response("Unsupported Google service", { status: 400 });
+  if (!SCOPES[service]) {
+    return htmlPage("Unsupported service", `<p>${escapeHtml(service || "(none)")} is not a supported Google service.</p>`, false, 400);
+  }
   const clientId = (env as any).GOOGLE_CLIENT_ID as string | undefined;
   const clientSecret = (env as any).GOOGLE_CLIENT_SECRET as string | undefined;
   if (!clientId || !clientSecret) {
-    return Response.json({ error: "Google OAuth not configured. Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in Worker secrets." }, { status: 400 });
+    return htmlPage(
+      "Google sign-in is not set up yet",
+      "<p>The Worker is missing its Google credentials, so this connection cannot start.</p>" +
+        "<p style=\"color:#9ca3af;font-size:13px\">Add <code>GOOGLE_CLIENT_ID</code> and <code>GOOGLE_CLIENT_SECRET</code> as Worker secrets, then try again.</p>",
+      false,
+      400,
+    );
   }
   const state = await signState(env.ENCRYPTION_SECRET, { uid: auth.uid, service, token: auth.token, ts: Date.now() });
   const params = new URLSearchParams({
@@ -128,11 +152,11 @@ export async function handleOAuthCallback(request: Request, env: Env, url: URL):
 }
 
 function escapeHtml(s: string) { return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]||c)); }
-function htmlPage(title: string, body: string, ok: boolean): Response {
+function htmlPage(title: string, body: string, ok: boolean, status = 200): Response {
   const color = ok ? "#10b981" : "#ef4444";
   return new Response(`<!doctype html><html><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><title>${escapeHtml(title)}</title>
   <style>body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#18181b;color:#e5e7eb;font-family:ui-sans-serif,system-ui}.card{background:#222226;border:1px solid #333;border-radius:16px;padding:28px;max-width:520px;width:92%}h1{margin:0 0 8px;font-size:20px;color:${color}}pre{white-space:pre-wrap;word-break:break-word;background:#111;padding:10px;border-radius:8px}</style></head>
-  <body><div class="card"><h1>${escapeHtml(title)}</h1>${body}</div></body></html>`, { headers: { "Content-Type": "text/html; charset=utf-8" } });
+  <body><div class="card"><h1>${escapeHtml(title)}</h1>${body}</div></body></html>`, { status, headers: { "Content-Type": "text/html; charset=utf-8" } });
 }
 
 export async function getValidGoogleAccessToken(env: Env, uid: string, token: string, service: string): Promise<string | null> {
