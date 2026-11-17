@@ -122,9 +122,9 @@ async function callCloudflare(env: Env, model: string, messages: Array<{role:str
   const modelId = model || "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
   let res: any;
   try {
-    res = await env["Worker AI"].run(modelId as any, { messages });
+    res = await env.AI.run(modelId as any, { messages });
   } catch {
-    res = await env["Worker AI"].run("@cf/meta/llama-3.3-70b-instruct-fp8-fast", { messages });
+    res = await env.AI.run("@cf/meta/llama-3.3-70b-instruct-fp8-fast", { messages });
   }
   const text = typeof res === "object" && res && "response" in res ? String(res.response) : JSON.stringify(res);
   return { text, model: modelId };

@@ -3,7 +3,7 @@ export interface Env {
   AGENT_STATE: DurableObjectNamespace;
   AUTOMATION_WORKFLOW: Workflow;
   ENCRYPTION_SECRET: string;
-  ["Worker AI"]: Ai;
+  AI: Ai;
 }
 
 export interface FirebaseTokenPayload {

@@ -10,7 +10,7 @@
     "run_worker_first": ["/api/*"]
   },
   "ai": {
-    "binding": "Worker AI"
+    "binding": "AI"
   },
   "durable_objects": {
     "bindings": [
