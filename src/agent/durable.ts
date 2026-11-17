@@ -39,6 +39,15 @@ export class AgentDurableObject {
         updatedAt TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS idx_chats_updatedAt ON chats(updatedAt DESC);
+
+      CREATE TABLE IF NOT EXISTS offline_keys (
+        serviceId TEXT PRIMARY KEY,
+        label TEXT NOT NULL DEFAULT '',
+        ciphertext TEXT NOT NULL,
+        iv TEXT NOT NULL,
+        salt TEXT NOT NULL,
+        updatedAt TEXT NOT NULL
+      );
     `);
     try { this.sql.exec(`ALTER TABLE logs ADD COLUMN workflowId TEXT`); } catch {}
     try { this.sql.exec(`ALTER TABLE logs ADD COLUMN workflowName TEXT`); } catch {}
@@ -182,6 +191,72 @@ export class AgentDurableObject {
         if (!row) return Response.json({ error: "not found" }, { status: 404 });
         let messages: any[] = []; try { messages = JSON.parse(String(row.messages || "[]")); } catch {}
         return Response.json({ id: String(row.id), title: String(row.title), messages, createdAt: String(row.createdAt), updatedAt: String(row.updatedAt) });
+      }
+
+      // --- Offline key copies (AES-GCM blobs for runs with no logged-in user) ---
+      if (request.method === "POST" && url.pathname === "/offline-keys") {
+        const body = (await request.json()) as {
+          serviceId?: string; label?: string; ciphertext?: string; iv?: string; salt?: string;
+        };
+        if (!body.serviceId || !body.ciphertext || !body.iv || !body.salt) {
+          return Response.json({ error: "serviceId, ciphertext, iv and salt are required" }, { status: 400 });
+        }
+        const now = new Date().toISOString();
+        this.sql.exec(
+          `INSERT INTO offline_keys (serviceId, label, ciphertext, iv, salt, updatedAt) VALUES (?, ?, ?, ?, ?, ?)
+           ON CONFLICT(serviceId) DO UPDATE SET label = ?, ciphertext = ?, iv = ?, salt = ?, updatedAt = ?`,
+          body.serviceId,
+          body.label ?? "",
+          body.ciphertext,
+          body.iv,
+          body.salt,
+          now,
+          body.label ?? "",
+          body.ciphertext,
+          body.iv,
+          body.salt,
+          now,
+        );
+        return Response.json({ ok: true, serviceId: body.serviceId });
+      }
+
+      if (request.method === "GET" && url.pathname === "/offline-keys") {
+        const rows = [...this.sql.exec(`SELECT serviceId, label, updatedAt FROM offline_keys ORDER BY serviceId`)];
+        return Response.json({
+          keys: rows.map((row) => ({
+            serviceId: String(row.serviceId),
+            label: String(row.label),
+            updatedAt: String(row.updatedAt),
+          })),
+        });
+      }
+
+      if (request.method === "GET" && url.pathname.startsWith("/offline-keys/")) {
+        const id = decodeURIComponent(url.pathname.slice("/offline-keys/".length));
+        const row = [...this.sql.exec(
+          `SELECT serviceId, label, ciphertext, iv, salt, updatedAt FROM offline_keys WHERE serviceId = ?`,
+          id,
+        )][0] as any;
+        if (!row) return Response.json({ error: "not found" }, { status: 404 });
+        return Response.json({
+          serviceId: String(row.serviceId),
+          label: String(row.label),
+          ciphertext: String(row.ciphertext),
+          iv: String(row.iv),
+          salt: String(row.salt),
+          updatedAt: String(row.updatedAt),
+        });
+      }
+
+      if (request.method === "DELETE" && url.pathname === "/offline-keys") {
+        this.sql.exec(`DELETE FROM offline_keys`);
+        return Response.json({ ok: true });
+      }
+
+      if (request.method === "DELETE" && url.pathname.startsWith("/offline-keys/")) {
+        const id = decodeURIComponent(url.pathname.slice("/offline-keys/".length));
+        this.sql.exec(`DELETE FROM offline_keys WHERE serviceId = ?`, id);
+        return Response.json({ ok: true });
       }
 
       return new Response("Not found", { status: 404 });
