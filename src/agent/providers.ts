@@ -1,5 +1,6 @@
 import type { Env } from "../types";
 import { getVaultCredential } from "../vault";
+import { coerceText } from "./text";
 
 export function stripFences(s: string): string {
   const t = s.trim();
@@ -62,8 +63,14 @@ export async function callGemini(apiKey: string, modelId: string, messages: Arra
     err.status = res.status;
     throw err;
   }
-  const text = data?.candidates?.[0]?.content?.parts?.map((p: any) => p.text || "").join("") || "";
-  return { text, model: modelId };
+  // Parts can be text, thought summaries, inline data or function calls; only
+  // the text parts are a chat reply.
+  const parts = data?.candidates?.[0]?.content?.parts;
+  let text = Array.isArray(parts)
+    ? parts.map((p: any) => (typeof p?.text === "string" ? p.text : "")).join("")
+    : "";
+  if (!text.trim() && parts) text = coerceText(parts);
+  return { text: typeof text === "string" ? text : coerceText(text), model: modelId };
 }
 
 export async function callGroq(apiKey: string, model: string, messages: Array<{role:string;content:string}>, jsonMode?: boolean): Promise<{text:string; model:string}> {
@@ -79,7 +86,7 @@ export async function callGroq(apiKey: string, model: string, messages: Array<{r
     const msg = data?.error?.message || JSON.stringify(data).slice(0, 300);
     const err: any = new Error(`Groq ${res.status}: ${msg}`); err.status = res.status; throw err;
   }
-  const text = data?.choices?.[0]?.message?.content || "";
+  const text = coerceText(data?.choices?.[0]?.message?.content ?? data?.choices?.[0]?.text ?? "");
   return { text, model };
 }
 
@@ -96,7 +103,7 @@ export async function callOpenRouter(apiKey: string, model: string, messages: Ar
     const msg = data?.error?.message || JSON.stringify(data).slice(0, 300);
     const err: any = new Error(`OpenRouter ${res.status}: ${msg}`); err.status = res.status; throw err;
   }
-  const text = data?.choices?.[0]?.message?.content || "";
+  const text = coerceText(data?.choices?.[0]?.message?.content ?? data?.choices?.[0]?.text ?? "");
   return { text, model };
 }
 
@@ -108,7 +115,10 @@ export async function callCloudflare(env: Env, model: string, messages: Array<{r
   } catch {
     res = await env.AI.run("@cf/meta/llama-3.3-70b-instruct-fp8-fast", { messages });
   }
-  const text = typeof res === "object" && res && "response" in res ? String(res.response) : JSON.stringify(res);
+  // Never String() an object here: Workers AI answers with strings,
+  // { response: string }, { response: object }, { result: { response } } or an
+  // array of chunks, and String({...}) is the literal "[object Object]".
+  const text = coerceText(res);
   return { text, model: modelId };
 }
 

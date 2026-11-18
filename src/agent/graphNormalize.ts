@@ -1,5 +1,6 @@
 import type { WorkflowEdge, WorkflowGroup, WorkflowNode } from "../types";
 import { extractProse } from "./jsonParse";
+import { cleanText, coerceText, isPlaceholder } from "./text";
 
 const NODE_TYPES = new Set([
   "trigger",
@@ -60,7 +61,15 @@ export interface NormalizedGraph {
 
 function str(value: unknown, fallback = ""): string {
   if (value === null || value === undefined) return fallback;
-  const s = String(value).trim();
+  // String({}) is "[object Object]"; models do return objects for name,
+  // subtype and explanation fields, so unwrap those before trimming.
+  const raw =
+    typeof value === "string"
+      ? value
+      : typeof value === "number" || typeof value === "boolean"
+        ? String(value)
+        : coerceText(value);
+  const s = raw.trim();
   return s || fallback;
 }
 
@@ -204,12 +213,12 @@ function looksLikeJSON(text: string): boolean {
  * otherwise salvage readable text, otherwise say something useful.
  */
 export function cleanExplanation(parsed: Record<string, any> | null, rawText: string): string {
-  const field = str(parsed?.explanation ?? parsed?.message ?? parsed?.summary);
-  if (field && !looksLikeJSON(field)) return field;
+  const field = cleanText(parsed?.explanation ?? parsed?.message ?? parsed?.summary, 6000);
+  if (field && !looksLikeJSON(field) && !isPlaceholder(field)) return field;
 
-  const prose = extractProse(rawText);
-  if (prose && !looksLikeJSON(prose)) return prose;
+  const prose = cleanText(extractProse(rawText), 6000);
+  if (prose && !looksLikeJSON(prose) && !isPlaceholder(prose)) return prose;
 
-  if (field && !looksLikeJSON(field)) return field;
+  if (field && !looksLikeJSON(field) && !isPlaceholder(field)) return field;
   return "";
 }
