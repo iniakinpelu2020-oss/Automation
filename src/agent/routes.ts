@@ -1,6 +1,7 @@
 import type { AgentRunRequest, Env, LogEntry, WorkflowGraph, WorkflowParams } from "../types";
 import { requireAuth } from "../vault/auth";
 import { runAI } from "./aiRouter";
+import { coerceText } from "./text";
 import { syncSchedule } from "./scheduler";
 import { mirrorItem } from "../vault/offline";
 
@@ -185,7 +186,9 @@ export async function handleAgentRequest(request: Request, env: Env, url: URL): 
           provider: (body as any).provider,
           model: (body as any).model,
         });
-        const text = aiRes.text;
+        // Provider replies are not always strings; extract the text rather than
+        // storing "[object Object]" in the run log.
+        const text = coerceText(aiRes.text);
         const result = JSON.stringify({ text, provider: aiRes.provider, model: aiRes.model, badge: aiRes.badge }, null, 2);
         await stub.fetch("https://do/log/update", {
           method: "POST",
