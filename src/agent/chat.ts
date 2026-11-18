@@ -3,6 +3,7 @@ import { requireAuth } from "../vault/auth";
 import { runAI } from "./aiRouter";
 import { cleanExplanation, detectExecuteIntent, inferCredentials, normalizeGraph } from "./graphNormalize";
 import { parseModelJSON } from "./jsonParse";
+import { cleanText, coerceText } from "./text";
 
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), { status, headers: { "Content-Type": "application/json" } });
@@ -45,7 +46,7 @@ interface ChatNode {
 }
 
 function normalizeAction(value: unknown): "build" | "edit" | "execute" | "chat" {
-  const s = String(value ?? "").trim().toLowerCase();
+  const s = coerceText(value).trim().toLowerCase();
   if (s === "build" || s === "create" || s === "new") return "build";
   if (s === "edit" || s === "update" || s === "modify") return "edit";
   if (s === "execute" || s === "run" || s === "start") return "execute";
@@ -58,11 +59,14 @@ function normalizeCodeBlocks(value: unknown): Array<{ language: string; title?: 
   for (const item of value.slice(0, 8)) {
     if (!item || typeof item !== "object") continue;
     const b = item as Record<string, unknown>;
-    const code = typeof b.code === "string" ? b.code : "";
+    // Some models nest the source one level deeper, or return it as a part array.
+    const code = cleanText(b.code ?? b.snippet ?? b.source ?? b.content, 20000);
     if (!code.trim()) continue;
+    const language = coerceText(b.language).trim();
+    const title = coerceText(b.title).trim();
     out.push({
-      language: typeof b.language === "string" && b.language.trim() ? b.language.trim() : "javascript",
-      title: typeof b.title === "string" && b.title.trim() ? b.title.trim() : undefined,
+      language: language || "javascript",
+      title: title || undefined,
       code,
     });
   }
@@ -136,7 +140,10 @@ export async function handleChatRequest(request: Request, env: Env, url: URL): P
         return json({ error: e instanceof Error ? e.message : "AI failed" }, 500);
       }
 
-      let parsed = parseModelJSON(aiRes.text);
+      // Workers AI can hand back { response }, { result }, or a chunk array;
+      // coerce once here so every later step works on a plain string.
+      let aiText = coerceText(aiRes.text);
+      let parsed = parseModelJSON(aiText);
 
       // One corrective retry: models sometimes answer with prose or broken JSON.
       if (!parsed) {
@@ -144,17 +151,17 @@ export async function handleChatRequest(request: Request, env: Env, url: URL): P
           const retry = await runAI(env, auth.uid, auth.token, {
             messages: [
               ...baseMessages,
-              { role: "assistant", content: String(aiRes.text || "").slice(0, 1500) },
+              { role: "assistant", content: aiText.slice(0, 1500) },
               { role: "user", content: "That reply was not valid JSON. Reply again with ONLY the single JSON object described in the system prompt: no markdown fences, no prose, no comments." },
             ],
             ...runOpts,
           });
-          const retried = parseModelJSON(retry.text);
-          if (retried) { parsed = retried; aiRes = retry; }
+          const retried = parseModelJSON(coerceText(retry.text));
+          if (retried) { parsed = retried; aiRes = retry; aiText = coerceText(retry.text); }
         } catch { /* keep the original reply */ }
       }
 
-      const explanation = cleanExplanation(parsed, aiRes.text);
+      const explanation = cleanText(cleanExplanation(parsed, aiText));
       const codeBlocks = normalizeCodeBlocks(parsed?.codeBlocks);
 
       let action = normalizeAction(parsed?.action);
@@ -184,6 +191,9 @@ export async function handleChatRequest(request: Request, env: Env, url: URL): P
             ? `Here's the workflow I prepared (${graph.nodes.length} step${graph.nodes.length === 1 ? "" : "s"}). Review it on the canvas, then press Execute Workflow.`
             : "I couldn't read that reply as a workflow. Try rephrasing it, or switch provider in the selector above and send again.";
       }
+      // Final guard: the chat bubble and the stored chat both get prose, never a
+      // placeholder or a stringified object.
+      text = cleanText(text) || "I couldn't read that reply as a workflow. Try rephrasing it, or switch provider in the selector above and send again.";
 
       const requiredCredentials = normalizeCredentials(parsed?.requiredCredentials, graph.nodes);
       const chatId = body.chatId || crypto.randomUUID();
