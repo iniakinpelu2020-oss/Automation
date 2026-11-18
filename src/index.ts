@@ -6,6 +6,7 @@ import { handleToolsRequest } from "./agent/tools";
 import { handleOAuthStart, handleOAuthCallback } from "./vault/oauth";
 import { handleScheduled } from "./agent/scheduler";
 import { handleDriveRequest } from "./drive";
+import { handleCopilotRequest } from "./agent/copilot";
 
 export { AgentDurableObject } from "./agent/durable";
 export { AutomationWorkflow } from "./agent/workflow";
@@ -18,6 +19,10 @@ export default {
     // Google OAuth 2.0
     if (url.pathname === "/api/oauth/google/start") return handleOAuthStart(request, env, url);
     if (url.pathname === "/api/oauth/google/callback") return handleOAuthCallback(request, env, url);
+
+    if (url.pathname === "/api/copilot") {
+      return handleCopilotRequest(request, env, url);
+    }
 
     if (url.pathname.startsWith("/api/drive")) {
       return handleDriveRequest(request, env, url);
