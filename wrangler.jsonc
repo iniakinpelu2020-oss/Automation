@@ -12,6 +12,15 @@
   "ai": {
     "binding": "AI"
   },
+  // Apex Drive storage is Backblaze B2 (10 GB free, no card required).
+  // Replace the region in the endpoint with the one shown on your B2 bucket page.
+  // The key id and app key are secrets, never stored here:
+  //   npx wrangler secret put DRIVE_B2_KEY_ID
+  //   npx wrangler secret put DRIVE_B2_APP_KEY
+  "vars": {
+    "DRIVE_B2_BUCKET": "apex-drive",
+    "DRIVE_B2_ENDPOINT": "https://s3.us-west-004.backblazeb2.com"
+  },
   "durable_objects": {
     "bindings": [
       {

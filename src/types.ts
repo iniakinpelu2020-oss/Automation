@@ -5,7 +5,13 @@ export interface Env {
   AUTOMATION_WORKFLOW: Workflow;
   ENCRYPTION_SECRET: string;
   AI: Ai;
-  DRIVE: R2Bucket;
+  // Apex Drive storage: Backblaze B2 via its S3-compatible API.
+  // The two credentials are secrets (wrangler secret put); the rest are vars.
+  DRIVE_B2_KEY_ID: string;
+  DRIVE_B2_APP_KEY: string;
+  DRIVE_B2_BUCKET: string;
+  DRIVE_B2_ENDPOINT: string;
+  DRIVE_B2_REGION?: string;
 }
 
 export interface FirebaseTokenPayload {

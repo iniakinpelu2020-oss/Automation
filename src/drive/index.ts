@@ -1,18 +1,23 @@
 import type { Env } from "../types";
 import { requireAuth } from "../vault/auth";
+import { b2Store, StorageNotConfigured, type DriveStore } from "./storage";
 
 // Cloud half of Apex Drive.
 //
-// Uploads go straight from the phone into R2 through this worker (streamed, never
-// buffered in memory). The manifest lives in R2 as JSON so there is no extra database.
+// Uploads go straight from the phone into storage through this worker (streamed, never
+// buffered in memory). The manifest lives in storage as JSON so there is no extra
+// database. The bucket behind DriveStore is Backblaze B2 — see storage.ts.
 //
 // Verification is deliberately explicit: an upload is only "verified" after the stored
 // object is re-read (size plus a sample hash of the first and last chunk). Nothing here
 // deletes anything on the phone — it only reports what is safe to clear.
 
 const MANIFEST_PREFIX = "_manifest/";
-const MAX_UPLOAD_BYTES = 4.5 * 1024 * 1024 * 1024; // stay under the 5 GB single-put limit
 const SAMPLE_BYTES = 64 * 1024;
+
+// Cloudflare caps request bodies on the Workers free plan at 100 MB, so a single
+// streamed upload cannot be bigger than that no matter what the bucket allows.
+const MAX_UPLOAD_BYTES = 95 * 1024 * 1024;
 
 export interface DriveItem {
   key: string;
@@ -42,11 +47,11 @@ function manifestKey(uid: string): string {
   return `${MANIFEST_PREFIX}${uid}.json`;
 }
 
-async function readManifest(env: Env, uid: string): Promise<Manifest> {
-  const obj = await env.DRIVE.get(manifestKey(uid));
-  if (!obj) return { version: 1, items: [] };
+async function readManifest(store: DriveStore, uid: string): Promise<Manifest> {
+  const raw = await store.readText(manifestKey(uid));
+  if (!raw) return { version: 1, items: [] };
   try {
-    const parsed = (await obj.json()) as Manifest;
+    const parsed = JSON.parse(raw) as Manifest;
     if (parsed && Array.isArray(parsed.items)) return parsed;
   } catch {
     // A corrupt manifest must never look like "everything is already saved".
@@ -54,10 +59,8 @@ async function readManifest(env: Env, uid: string): Promise<Manifest> {
   return { version: 1, items: [] };
 }
 
-async function writeManifest(env: Env, uid: string, manifest: Manifest): Promise<void> {
-  await env.DRIVE.put(manifestKey(uid), JSON.stringify(manifest), {
-    httpMetadata: { contentType: "application/json" },
-  });
+async function writeManifest(store: DriveStore, uid: string, manifest: Manifest): Promise<void> {
+  await store.putText(manifestKey(uid), JSON.stringify(manifest), "application/json");
 }
 
 function safeName(name: string): string {
@@ -83,22 +86,26 @@ async function sha256Hex(bytes: ArrayBuffer): Promise<string> {
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
+function concatBytes(a: Uint8Array, b: Uint8Array): ArrayBuffer {
+  const merged = new Uint8Array(a.byteLength + b.byteLength);
+  merged.set(a, 0);
+  merged.set(b, a.byteLength);
+  return merged.buffer;
+}
+
 /** Hash of the first and last SAMPLE_BYTES — cheap proof the stored bytes are the ones sent. */
-async function sampleHash(env: Env, key: string, size: number): Promise<string | null> {
-  const head = await env.DRIVE.get(key, { range: { offset: 0, length: Math.min(SAMPLE_BYTES, size) } });
+async function sampleHash(store: DriveStore, key: string, size: number): Promise<string | null> {
+  if (size <= 0) return null;
+
+  const head = await store.readRange(key, 0, Math.min(SAMPLE_BYTES, size));
   if (!head) return null;
-  const headBytes = await head.arrayBuffer();
-  if (size <= SAMPLE_BYTES) return sha256Hex(headBytes);
+  if (size <= SAMPLE_BYTES) return sha256Hex(head.buffer as ArrayBuffer);
 
   const tailOffset = Math.max(0, size - SAMPLE_BYTES);
-  const tail = await env.DRIVE.get(key, { range: { offset: tailOffset, length: SAMPLE_BYTES } });
+  const tail = await store.readRange(key, tailOffset, SAMPLE_BYTES);
   if (!tail) return null;
-  const tailBytes = await tail.arrayBuffer();
 
-  const merged = new Uint8Array(headBytes.byteLength + tailBytes.byteLength);
-  merged.set(new Uint8Array(headBytes), 0);
-  merged.set(new Uint8Array(tailBytes), headBytes.byteLength);
-  return sha256Hex(merged.buffer);
+  return sha256Hex(concatBytes(head, tail));
 }
 
 export async function handleDriveRequest(request: Request, env: Env, url: URL): Promise<Response> {
@@ -113,9 +120,23 @@ export async function handleDriveRequest(request: Request, env: Env, url: URL): 
 }
 
 /** The routes themselves, with the caller's identity already established. */
-export async function driveForUser(env: Env, uid: string, request: Request, url: URL): Promise<Response> {
+export async function driveForUser(
+  env: Env,
+  uid: string,
+  request: Request,
+  url: URL,
+  store?: DriveStore
+): Promise<Response> {
+  let s: DriveStore;
   try {
-    // --- Upload: streamed straight into R2 ---
+    s = store ?? b2Store(env);
+  } catch (err) {
+    if (err instanceof StorageNotConfigured) return json({ error: err.message }, 503);
+    throw err;
+  }
+
+  try {
+    // --- Upload: streamed straight into storage ---
     if (request.method === "PUT" && url.pathname === "/api/drive/upload") {
       const name = url.searchParams.get("name") || "";
       const sha256 = (url.searchParams.get("sha256") || "").toLowerCase();
@@ -126,7 +147,14 @@ export async function driveForUser(env: Env, uid: string, request: Request, url:
 
       const declared = Number(request.headers.get("content-length") || "0");
       if (declared > MAX_UPLOAD_BYTES) {
-        return json({ error: "file too large for a single upload", max: MAX_UPLOAD_BYTES }, 413);
+        return json(
+          {
+            error: "file too large for a single upload",
+            max: MAX_UPLOAD_BYTES,
+            hint: "split the file, or upload it directly to storage",
+          },
+          413
+        );
       }
       if (!request.body) return json({ error: "empty body" }, 400);
 
@@ -134,16 +162,17 @@ export async function driveForUser(env: Env, uid: string, request: Request, url:
       const key = `${uid}/${now.getUTCFullYear()}/${crypto.randomUUID()}-${safeName(name)}`;
       const contentType = request.headers.get("content-type") || "application/octet-stream";
 
-      const stored = await env.DRIVE.put(key, request.body, {
-        httpMetadata: { contentType },
-        customMetadata: { sha256, originalName: name.slice(0, 200) },
+      const stored = await s.putStream(key, request.body, {
+        contentType,
+        sha256,
+        contentLength: Number.isFinite(declared) ? declared : undefined,
       });
       if (!stored) return json({ error: "storage rejected the upload" }, 502);
 
-      const head = await env.DRIVE.head(key);
+      const head = await s.head(key);
       const size = head?.size ?? 0;
 
-      const manifest = await readManifest(env, uid);
+      const manifest = await readManifest(s, uid);
       manifest.items.unshift({
         key,
         name,
@@ -155,7 +184,7 @@ export async function driveForUser(env: Env, uid: string, request: Request, url:
         sampleHash: null,
         approvedAt: null,
       });
-      await writeManifest(env, uid, manifest);
+      await writeManifest(s, uid, manifest);
 
       return json({ ok: true, key, size, uploadedAt: now.toISOString() });
     }
@@ -166,22 +195,22 @@ export async function driveForUser(env: Env, uid: string, request: Request, url:
       const key = body?.key;
       if (!key) return json({ error: "key is required" }, 400);
 
-      const manifest = await readManifest(env, uid);
+      const manifest = await readManifest(s, uid);
       const item = manifest.items.find((i) => i.key === key);
       if (!item) return json({ error: "not in manifest" }, 404);
 
-      const head = await env.DRIVE.head(key);
+      const head = await s.head(key);
       if (!head) return json({ ok: false, reason: "object missing from storage" }, 409);
 
       const sizeMatches = head.size === item.size;
-      const sample = await sampleHash(env, key, head.size);
-      const storedSha = (head.customMetadata?.sha256 || "").toLowerCase();
+      const sample = await sampleHash(s, key, head.size);
+      const storedSha = (head.sha256 || "").toLowerCase();
       const shaMatches = storedSha === item.sha256;
 
       if (sizeMatches && sample) {
         item.verifiedAt = new Date().toISOString();
         item.sampleHash = sample;
-        await writeManifest(env, uid, manifest);
+        await writeManifest(s, uid, manifest);
       }
 
       return json({
@@ -199,7 +228,7 @@ export async function driveForUser(env: Env, uid: string, request: Request, url:
     if (request.method === "GET" && url.pathname === "/api/drive/reclaimable") {
       const days = daysParam(url);
       const cutoff = Date.now() - days * 86400 * 1000;
-      const manifest = await readManifest(env, uid);
+      const manifest = await readManifest(s, uid);
 
       const ready = manifest.items.filter(
         (i) => i.verifiedAt && !i.approvedAt && new Date(i.verifiedAt).getTime() <= cutoff
@@ -225,7 +254,7 @@ export async function driveForUser(env: Env, uid: string, request: Request, url:
 
       const days = daysParam(url);
       const cutoff = Date.now() - days * 86400 * 1000;
-      const manifest = await readManifest(env, uid);
+      const manifest = await readManifest(s, uid);
       const approved: string[] = [];
       const refused: Array<{ key: string; reason: string }> = [];
 
@@ -247,12 +276,12 @@ export async function driveForUser(env: Env, uid: string, request: Request, url:
         approved.push(key);
       }
 
-      await writeManifest(env, uid, manifest);
+      await writeManifest(s, uid, manifest);
       return json({ ok: true, approved, refused });
     }
 
     if (request.method === "GET" && url.pathname === "/api/drive/list") {
-      const manifest = await readManifest(env, uid);
+      const manifest = await readManifest(s, uid);
       const totalBytes = manifest.items.reduce((sum, i) => sum + i.size, 0);
       return json({
         items: manifest.items,
