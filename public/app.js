@@ -1,1 +1,1 @@
-console.log('test');
+PLACEHOLDER_CONTENT_FOR_TESTING
