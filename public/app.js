@@ -1,1 +1,1 @@
-<°s‹DyÓM
+console.log('test');
