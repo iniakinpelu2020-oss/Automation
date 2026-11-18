@@ -3,6 +3,7 @@ import type { Env, NodeLog, WorkflowNode, WorkflowParams } from "../types";
 import { getVaultCredential } from "../vault";
 import { getValidGoogleAccessToken } from "../vault/oauth";
 import { runAI } from "./aiRouter";
+import { coerceText } from "./text";
 
 type CredFlat = { [k: string]: string | number | boolean | null };
 type OutputsMap = Record<string, any>;
@@ -401,7 +402,7 @@ export class AutomationWorkflow extends WorkflowEntrypoint<Env, WorkflowParams> 
               { role: "user" as const, content: promptTpl || toText(inputFromPred) || "Execute this step." },
             ];
             const aiRes = await runAI(this.env, uid, token, { messages, provider, model: customModel, jsonMode: !!resolvedConfig.jsonMode });
-            return toSerializable({ output: aiRes.text, model: aiRes.model, provider: aiRes.provider, badge: aiRes.badge, failoverReasons: aiRes.failoverReasons || [] });
+            return toSerializable({ output: coerceText(aiRes.text), model: aiRes.model, provider: aiRes.provider, badge: aiRes.badge, failoverReasons: aiRes.failoverReasons || [] });
           }
 
           if (node.type === "code" || node.subtype === "js" || node.subtype === "code") {
