@@ -90,6 +90,40 @@ export async function setVaultItem(uid: string, token: string, item: VaultItem):
   }
 }
 
+/**
+ * One copilot action-log record under `users/{uid}/copilotLog`.
+ *
+ * Firestore (not the Durable Object) because COPILOT.md logs are per-user and
+ * need to outlive a single device; each record is tiny. A failure here is
+ * logged and swallowed by the caller — a missing audit row must never block
+ * the assistant's answer.
+ */
+export async function appendCopilotLog(
+  uid: string,
+  token: string,
+  record: Record<string, unknown>,
+): Promise<void> {
+  const id = `${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
+  const url = `${BASE}/users/${encodeURIComponent(uid)}/copilotLog?documentId=${encodeURIComponent(id)}`;
+  const fields: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(record)) {
+    if (v === undefined) continue;
+    fields[k] = toFsValue(v);
+  }
+  const res = await fetch(url, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ fields }),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Firestore copilot log failed: ${res.status} ${text}`);
+  }
+}
+
 export async function deleteVaultItem(uid: string, token: string, serviceId: string): Promise<void> {
   const url = `${BASE}/users/${encodeURIComponent(uid)}/vault/${encodeURIComponent(serviceId)}`;
   const res = await fetch(url, {
